@@ -1,7 +1,7 @@
 building test image with new kernel:
 ------------------------------------
 
-mkdir config/apt
+mkdir -p config/apt
 vi config/apt/preferences
 
 Package: linux-compiler-gcc-10-x86

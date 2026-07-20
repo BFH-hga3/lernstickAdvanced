@@ -1,0 +1,71 @@
+#!/bin/sh
+# firefox_policies.hook.chroot
+# Creates the Firefox ESR policy file in /usr/lib/firefox-esr/distribution/
+# and symlinks /etc/firefox-esr/policies/policies.json to it.
+#
+# Maintaining policy in one place (this hook) avoids conflicts with the
+# firefox-esr package's /etc/firefox-esr directory and keeps everything
+# in a single file for easy editing.
+
+set -e
+
+POLICY_FILE="/usr/lib/firefox-esr/distribution/policies.json"
+POLICY_DIR="/etc/firefox-esr/policies"
+POLICY_LINK="${POLICY_DIR}/policies.json"
+
+# --- 1. Write the policy file ---
+
+mkdir -p "$(dirname ${POLICY_FILE})"
+
+cat > "${POLICY_FILE}" << 'EOF'
+{
+  "policies": {
+    "BlockAboutConfig": true,
+    "BlockAboutProfiles": true,
+    "BlockAboutSupport": true,
+    "BlockAboutAddons": true,
+    "DisableDeveloperTools": true,
+    "DisableFirefoxAccounts": true,
+    "DisableSetDesktopBackground": true,
+    "DisableTelemetry": true,
+    "DisplayBookmarksToolbar": "never",
+    "DisplayMenuBar": "never",
+    "HideFirefoxAccountButton": true,
+    "NewTabPage": false,
+    "NoDefaultBookmarks": true,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "PasswordManagerEnabled": false,
+    "WebsiteFilter": {
+      "Block": ["<all_urls>"],
+      "Exceptions": [
+        "https://login.eduid.ch/*",
+        "https://*.eduid.ch/*",
+        "https://moodle.msengineering.ch/*",
+        "https://drive.switch.ch/index.php/s/NnNaOgN4lHaqe2M*",
+        "https://drive.switch.ch/index.php/s/tQLKBilUJ7l8DLj*"
+      ]
+    },
+    "UserMessaging": {
+      "WhatsNew": false,
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "UrlbarInterventions": false,
+      "SkipOnboarding": true
+    }
+  }
+}
+EOF
+
+echo "Policy written: ${POLICY_FILE}"
+
+# --- 2. Symlink /etc/firefox-esr/policies/policies.json -> POLICY_FILE ---
+# The firefox-esr package creates /etc/firefox-esr/ as a directory.
+# We must not place files there via includes.chroot_after_packages as
+# live-build cannot overwrite a non-empty directory with a symlink.
+
+mkdir -p "${POLICY_DIR}"
+rm -f "${POLICY_LINK}"
+ln -s "${POLICY_FILE}" "${POLICY_LINK}"
+
+echo "Symlink created: ${POLICY_LINK} -> ${POLICY_FILE}"
