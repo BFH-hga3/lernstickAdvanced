@@ -12,9 +12,9 @@ lernstick-exam-client
 lernstick-flatpak-musescore
 lernstick-libreoffice-lockdown
 lernstick-pspp
-lernstick-r-base-core
-lernstick-virtualbox
-lernstick-wine
-processing
-rstudio
-wine-gecko
+#lernstick-r-base-core
+#lernstick-virtualbox
+#lernstick-wine
+#processing
+#rstudio
+#wine-gecko

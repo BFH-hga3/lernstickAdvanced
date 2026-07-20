@@ -1,3 +1,14 @@
-AutoStartInstaller=true
+AutoStartInstaller=false
 ShowNotUsedInfo=true
 ShowReadOnlyInfo=true
+Backup=false
+BackupDirectory=
+BackupDirectoryEnabled=false
+BackupFrequency=5
+BackupPartition=
+BackupPartitionEnabled=false
+BackupScreenshot=false
+BackupSource=/home/user/
+ExchangeAccess=false
+ShowPasswordDialog=false
+ShowWelcome=false

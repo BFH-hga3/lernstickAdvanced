@@ -1,0 +1,11 @@
+{
+  "policies": {
+    "DisablePasswordManager": true,
+    "PrivateBrowsingModeAvailability": 2,
+    "Homepage": {
+      "URL": "https://moodle.msengineering.ch|https://drive.switch.ch/index.php/s/NnNaOgN4lHaqe2M",
+      "StartPage": "homepage",
+      "Locked": true
+    }
+  }
+}

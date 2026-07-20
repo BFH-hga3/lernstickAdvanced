@@ -17,7 +17,7 @@ lernstick-execute-jar
 lernstick-htop
 lernstick-imagemagick
 lernstick-libinput-quirks
-lernstick-mc
+#lernstick-mc
 lernstick-menu
 lernstick-nvtop
 lernstick-onboard

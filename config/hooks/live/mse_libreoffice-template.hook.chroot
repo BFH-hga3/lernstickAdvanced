@@ -1,0 +1,80 @@
+#!/bin/sh
+set -e
+
+USER="user"
+HOME_DIR="/home/$USER"
+DESKTOP="$HOME_DIR/Desktop"
+TEMPLATE_LOCAL="/usr/local/share/templates/mse-default.odt"
+SCRIPT="/usr/local/bin/fetch-template.sh"
+
+# Ensure directories
+mkdir -p "$DESKTOP"
+mkdir -p /usr/local/share/templates
+
+# Copy fallback template (you must provide this file in config/includes.chroot)
+if [ -f ${TEMPLATE_LOCAL} ]; then
+    echo "Template already present"
+else
+    echo "WARNING: No fallback template found!"
+fi
+
+# Create fetch script
+cat > "$SCRIPT" << 'EOF'
+#!/bin/sh
+
+USER="user"
+DESKTOP="/home/$USER/Desktop"
+TARGET="$DESKTOP/MSE_YourFullName_ReviewRequest.odt"
+
+NEXTCLOUD_URL="https://drive.switch.ch/index.php/s/tQLKBilUJ7l8DLj/download"
+
+# Wait for network (up to 10 seconds)
+if command -v nm-online >/dev/null 2>&1; then
+    nm-online -q --timeout=10
+fi
+
+# Try to download
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$NEXTCLOUD_URL" -o "$TARGET"
+    STATUS=$?
+elif command -v wget >/dev/null 2>&1; then
+    wget -q "$NEXTCLOUD_URL" -O "$TARGET"
+    STATUS=$?
+else
+    STATUS=1
+fi
+
+# Fallback if download failed
+if [ "$STATUS" -ne 0 ] || [ ! -s "$TARGET" ]; then
+    cp /usr/local/share/templates/mse-default.odt "$TARGET"
+    
+    # Show message (works in most desktop envs)
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "Template fallback" "Using local template (SwitchDrive unavailable)"
+    else
+        echo "Using local template (SwitchDrive unavailable)"
+    fi
+else
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "Template loaded" "Downloaded from SwitchDrive"
+    fi
+fi
+
+chown "$USER":"$USER" "$TARGET"
+EOF
+
+chmod +x "$SCRIPT"
+
+# Autostart entry
+mkdir -p /etc/xdg/autostart
+
+cat > /etc/xdg/autostart/fetch-template.desktop << EOF
+[Desktop Entry]
+Type=Application
+Name=Fetch MSE Template
+Exec=$SCRIPT
+X-GNOME-Autostart-enabled=true
+EOF
+
+# Fix ownership
+chown -R $USER:$USER "$HOME_DIR/Desktop"

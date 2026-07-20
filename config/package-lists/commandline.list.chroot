@@ -5,7 +5,7 @@
 #
 ################################################################################
 
-aptitude
+#aptitude
 apt-rdepends
 bash-completion
 bind9-host
@@ -25,7 +25,7 @@ ipcalc
 ipcalc-ng
 iptraf-ng
 less
-mc
+#mc
 mtools
 ncdu
 nethogs

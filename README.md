@@ -1,10 +1,49 @@
-# lernstickAdvanced
-buildscripts for school centric Debian Live distributions
+# Lernstick Debian Live – Build Environment: Getting Started
 
-packages needed on a Debian system to run this script:
-* dialog
-* gfxboot
-* libhtml-parser-perl
-* live-build
-* rsync
-* zsync
+> Buildscripts for school-centric Debian Live distributions  
+> Repository: https://github.com/Lernstick/lernstickAdvanced  
+> Active branch: `debian13` (Debian Trixie)
+
+---
+
+## Prerequisites
+
+### Host system
+
+A Debian or Ubuntu host is required. Install the build dependencies:
+
+```bash
+sudo apt install \
+  dialog \
+  gfxboot \
+  libhtml-parser-perl \
+  live-build \
+  rsync \
+  zsync \
+  systemd-container
+```
+
+Sufficient disk space (or RAM for tmpfs builds):
+
+| Build method | Space required |
+|---|---|
+| Disk build | ~30–40 GB free on disk |
+| tmpfs build | ~50–55 GB free RAM |
+
+---
+
+## 1. Clone the Repository
+
+```bash
+git clone --branch debian13 https://github.com/Lernstick/lernstickAdvanced.git
+cd lernstickAdvanced
+```
+
+To inspect available branches:
+
+```bash
+git branch -a
+```
+
+---
+
