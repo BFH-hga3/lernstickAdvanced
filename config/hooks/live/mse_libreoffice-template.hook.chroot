@@ -1,39 +1,38 @@
 #!/bin/sh
 set -e
 
-USER="user"
-HOME_DIR="/home/$USER"
-DESKTOP="$HOME_DIR/Desktop"
 TEMPLATE_LOCAL="/usr/local/share/templates/mse-default.ott"
 SCRIPT="/usr/local/bin/fetch-template.sh"
 
-# Ensure directories
-mkdir -p "$DESKTOP"
+# Ensure template directory exists (system path, no user needed)
 mkdir -p /usr/local/share/templates
 
-# Copy fallback template (you must provide this file in config/includes.chroot)
-if [ -f ${TEMPLATE_LOCAL} ]; then
+# Verify fallback template is present
+if [ -f "${TEMPLATE_LOCAL}" ]; then
     echo "Template already present"
 else
-    echo "WARNING: No fallback template found!"
+    echo "WARNING: No fallback template found at ${TEMPLATE_LOCAL}!"
 fi
 
-# Create fetch script
-cat > "$SCRIPT" << 'EOF'
+# Create the fetch script (runs at login in the live session where 'user' exists)
+cat > "${SCRIPT}" << 'EOF'
 #!/bin/sh
 
 USER="user"
 DESKTOP="/home/$USER/Desktop"
 TARGET="$DESKTOP/MSE_FullName_ModuleCode.ott"
-
+TEMPLATE_LOCAL="/usr/local/share/templates/mse-default.ott"
 NEXTCLOUD_URL="https://drive.switch.ch/index.php/s/tQLKBilUJ7l8DLj/download"
+
+# Ensure Desktop exists (user is now live, so this is safe)
+mkdir -p "$DESKTOP"
 
 # Wait for network (up to 10 seconds)
 if command -v nm-online >/dev/null 2>&1; then
     nm-online -q --timeout=10
 fi
 
-# Try to download
+# Try to download template
 if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$NEXTCLOUD_URL" -o "$TARGET"
     STATUS=$?
@@ -44,11 +43,9 @@ else
     STATUS=1
 fi
 
-# Fallback if download failed
+# Fallback if download failed or file is empty
 if [ "$STATUS" -ne 0 ] || [ ! -s "$TARGET" ]; then
-    cp /usr/local/share/templates/mse-default.ott "$TARGET"
-    
-    # Show message (works in most desktop envs)
+    cp "$TEMPLATE_LOCAL" "$TARGET"
     if command -v notify-send >/dev/null 2>&1; then
         notify-send "Template fallback" "Using local template (SwitchDrive unavailable)"
     else
@@ -60,21 +57,20 @@ else
     fi
 fi
 
-chown "$USER":"$USER" "$TARGET"
+# Fix ownership (user now exists in live session)
+chown "$USER:$USER" "$TARGET"
 EOF
 
-chmod +x "$SCRIPT"
+chmod +x "${SCRIPT}"
 
-# Autostart entry
+# Create XDG autostart entry so the script runs at login
 mkdir -p /etc/xdg/autostart
 
 cat > /etc/xdg/autostart/fetch-template.desktop << EOF
 [Desktop Entry]
 Type=Application
 Name=Fetch MSE Template
-Exec=$SCRIPT
+Exec=${SCRIPT}
 X-GNOME-Autostart-enabled=true
 EOF
 
-# Fix ownership
-chown -R $USER:$USER "$HOME_DIR/Desktop"

@@ -1,0 +1,14 @@
+#!/bin/sh
+# virtualbox_guest.hook.chroot
+# Enables VirtualBox guest services if virtualbox-guest-utils is installed.
+# Safe to include in production builds — exits silently if VBox is not present.
+
+set -e
+
+if dpkg -l virtualbox-guest-utils 2>/dev/null | grep -q "^ii"; then
+    echo "Enabling VirtualBox guest services..."
+    systemctl enable virtualbox-guest-utils.service || true
+    echo "Done."
+else
+    echo "INFO: virtualbox-guest-utils not installed, skipping"
+fi

@@ -1,0 +1,12 @@
+# =============================================================================
+# virtualbox-guest.list.chroot
+# Additional packages for running the exam image in VirtualBox (testing only).
+# Remove or rename this file (e.g. virtualbox-guest.list.chroot.disabled)
+# before building the final production ISO for real exam hardware.
+# =============================================================================
+
+# VirtualBox guest utilities (display resize, clipboard, drag-and-drop)
+virtualbox-guest-utils
+
+# VirtualBox X11 guest driver (proper display acceleration)
+virtualbox-guest-x11
