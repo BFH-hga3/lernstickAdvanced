@@ -10,8 +10,8 @@
 #lernstick-baobab
 lernstick-evince
 #lernstick-file-roller
-#lernstick-firefox-addons
-#lernstick-firefox-esr
+lernstick-firefox-addons
+lernstick-firefox-esr
 lernstick-font-manager
 lernstick-font-viewer
 #lernstick-fslint

@@ -95,9 +95,10 @@ build_image()
 	lb clean
 	lb config \
 		--apt-indices false \
-		--apt-recommends true \
+		--apt-recommends false \
 		--architectures amd64 \
 		--archive-areas "main contrib non-free non-free-firmware" \
+		--debian-installer false \
 		--bootloaders "syslinux,grub-efi" \
 		--chroot-squashfs-compression-level 22 \
 		--chroot-squashfs-compression-type zstd \

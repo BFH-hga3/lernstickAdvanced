@@ -7,7 +7,7 @@
 ################################################################################
 
 lernstick-libreoffice-base
-#lernstick-libreoffice-calc
+lernstick-libreoffice-calc
 lernstick-libreoffice-common
 #lernstick-libreoffice-draw
 #lernstick-libreoffice-gtk
@@ -16,7 +16,7 @@ lernstick-libreoffice-common
 lernstick-libreoffice-writer
 libreoffice
 libreoffice-base
-#libreoffice-calc
+libreoffice-calc
 #libreoffice-draw
 libreoffice-gnome
 libreoffice-gtk3
@@ -28,11 +28,14 @@ libreoffice-gtk3
 #libreoffice-help-pt-br
 #libreoffice-help-ru
 #libreoffice-impress
-#libreoffice-l10n-de
+libreoffice-l10n-de
 #libreoffice-l10n-es
 #libreoffice-l10n-fa
-#libreoffice-l10n-fr
-#libreoffice-l10n-it
+libreoffice-l10n-fr
+libreoffice-l10n-it
+libreoffice-l10n-en-gb
+# English US (default, usually included, explicit for clarity)
+libreoffice-l10n-en-us
 #libreoffice-l10n-kmr
 #libreoffice-l10n-pt-br
 #libreoffice-l10n-ru
@@ -46,3 +49,21 @@ libreoffice-gtk3
 #libreoffice-style-sukapura
 #libreoffice-templatepack
 libreoffice-writer
+# German (covers de_CH)
+hunspell-de-ch
+hyphen-de
+mythes-de
+# French
+hunspell-fr
+hyphen-fr
+mythes-fr
+# Italian
+hunspell-it
+hyphen-it
+mythes-it
+# English GB
+hunspell-en-gb
+hyphen-en-gb
+mythes-en-us
+# English US
+hunspell-en-us

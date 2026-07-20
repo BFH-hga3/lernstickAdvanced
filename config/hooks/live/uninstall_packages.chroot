@@ -1,21 +1,18 @@
 #!/bin/sh
 
-# Note: DON'T purge xscreensaver, without it the screensavers in MATE, LXDE and XFCE just crash (seen in Debian 9).
+# Note: DON'T purge xscreensaver, without it the screensavers in MATE, LXDE and XFCE just crash (seen in Debian 9)
 
 # Building the system with recommends enabled pulls in a lot of packages we
 # don't want to have. Unfortunately, we have no blacklist while building the
-# system so we have to remove them here right afer installing them...
+# system so we have to remove them here right after installing them...
 apt-get purge -y \
 	firmware-marvell-prestera \
 	gnome-contacts \
 	gnome-maps \
 	gnome-weather \
 	hunspell-de-de \
-	hunspell-en-us \
 	hunspell-es \
-	hunspell-fr \
 	hunspell-fr-classical \
-	hunspell-it \
 	hunspell-pt-br \
 	hunspell-ru \
 	malcontent-gui \
@@ -27,24 +24,22 @@ apt-get purge -y \
 	xserver-xorg-video-intel \
 	zutty
 
+# NOTE: hunspell-fr, hunspell-it and hunspell-en-us arhunspell-en-gb intentionally kept
+# as they are needed for LibreOffice spellcheck in the exam environment
+# (de_CH, fr_CH, it_CH, en_GB, en_US locales).
+
 # for whatever reason apparmor prevents evince from starting
 # therefore we remove it here
 apt-get purge -y apparmor
 
-# The default DHCP client in Debian 9 (isc-dhcp-client) has a horrible bug. It
-# breaks when doing time synchronization in combination with short DHCP leases,
-# see: https://bugs.isc.org/Public/Bug/Display.html?id=45540
-# This is a very common situation for our users. Therefore it is better to
-# remove this package. By doing so NetworkManager will fallback to it's
-# built-in DHCP client which is not currently as featureful but at least works
-# correctly in the scenario described in the bugreport above.
+# The default DHCP client in Debian 9 (isc-dhcp-client) has a horrible bug.
+# Therefore it is better to remove this package.
 apt-get purge -y \
 	isc-dhcp-client \
 	isc-dhcp-common
 
 # In the exam environment we have to disable bluetooth support to prevent
-# data exchange with smartphones, etc. Therefore we remove here the relevant
-# bluetooth packages.
+# data exchange with smartphones, etc.
 apt-get purge -y \
 	bluez \
 	bluez-obexd \
@@ -57,3 +52,4 @@ apt-get purge -y gnome-software
 
 # clean up
 apt-get purge -y --auto-remove
+

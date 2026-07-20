@@ -1,0 +1,40 @@
+{
+  "policies": {
+    "BlockAboutConfig": true,
+    "BlockAboutProfiles": true,
+    "BlockAboutSupport": true,
+    "BlockAboutAddons": true,
+    "DisableDeveloperTools": true,
+    "DisableFirefoxAccounts": true,
+    "DisableSetDesktopBackground": true,
+    "DisableTelemetry": true,
+    "DisplayBookmarksToolbar": "never",
+    "DisplayMenuBar": "never",
+    "HideFirefoxAccountButton": true,
+    "NewTabPage": false,
+    "NoDefaultBookmarks": true,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "PasswordManagerEnabled": false,
+    "WebsiteFilter": {
+      "Block": [
+        "<all_urls>"
+      ],
+      "Exceptions": [
+	"https://login.eduid.ch/*",
+	"https://*.login.eduid.ch/*",
+	"https://*.eduid.ch/*",
+        "https://moodle.msengineering.ch/*",
+        "https://drive.switch.ch/index.php/s/NnNaOgN4lHaqe2M*",
+        "https://drive.switch.ch/index.php/s/tQLKBilUJ7l8DLj*"
+      ]
+    },
+    "UserMessaging": {
+      "WhatsNew": false,
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "UrlbarInterventions": false,
+      "SkipOnboarding": true
+    }
+  }
+}

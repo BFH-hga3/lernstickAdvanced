@@ -4,7 +4,7 @@ set -e
 USER="user"
 HOME_DIR="/home/$USER"
 DESKTOP="$HOME_DIR/Desktop"
-TEMPLATE_LOCAL="/usr/local/share/templates/mse-default.odt"
+TEMPLATE_LOCAL="/usr/local/share/templates/mse-default.ott"
 SCRIPT="/usr/local/bin/fetch-template.sh"
 
 # Ensure directories
@@ -24,7 +24,7 @@ cat > "$SCRIPT" << 'EOF'
 
 USER="user"
 DESKTOP="/home/$USER/Desktop"
-TARGET="$DESKTOP/MSE_YourFullName_ReviewRequest.odt"
+TARGET="$DESKTOP/MSE_FullName_ModuleCode.ott"
 
 NEXTCLOUD_URL="https://drive.switch.ch/index.php/s/tQLKBilUJ7l8DLj/download"
 
@@ -46,7 +46,7 @@ fi
 
 # Fallback if download failed
 if [ "$STATUS" -ne 0 ] || [ ! -s "$TARGET" ]; then
-    cp /usr/local/share/templates/mse-default.odt "$TARGET"
+    cp /usr/local/share/templates/mse-default.ott "$TARGET"
     
     # Show message (works in most desktop envs)
     if command -v notify-send >/dev/null 2>&1; then

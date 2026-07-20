@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Moodle MSE
+Comment=Open Moodle MSE (private, locked)
+Exec=/usr/local/bin/firefox-moodle.sh
+Icon=edu-mozilla-firefox
+Terminal=false
+Categories=Network;WebBrowser;
