@@ -1,0 +1,297 @@
+#!/bin/sh
+# mse_branding.hook.chroot
+#
+# Downloads MSE branding assets at build time and installs:
+#   1. GNOME desktop wallpaper (generated from MSE logo + background colour)
+#   2. GRUB bootloader theme with MSE logo
+#   3. GNOME dconf defaults to apply the wallpaper system-wide
+#
+# Assets are downloaded from msengineering.ch during lb build.
+# If download fails, minimal fallback assets are generated using ImageMagick.
+#   Required by mse_branding.hook.chroot
+#     imagemagick
+#     librsvg2-bin
+# All configurable properties are defined at the top.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+# MSE brand colours (from msengineering.ch)
+MSE_BG_COLOUR="#002B5C"        # Dark MSE navy blue
+MSE_ACCENT_COLOUR="#FFFFFF"    # White for text/logo on dark background
+
+# Asset source URLs
+LOGO_SVG_URL="https://www.msengineering.ch/_assets/0a6b389c64780974c6ce7ea1cdfa38d4/Images/Logo/mse-full-white.svg"
+LOGO_DARK_URL="https://www.msengineering.ch/_assets/0a6b389c64780974c6ce7ea1cdfa38d4/Images/Logo/mse-full.svg"
+
+# Wallpaper settings
+WALLPAPER_DIR="/usr/share/backgrounds/mse"
+WALLPAPER_FILE="${WALLPAPER_DIR}/mse-wallpaper.png"
+WALLPAPER_WIDTH=1920
+WALLPAPER_HEIGHT=1080
+
+# GRUB theme settings
+GRUB_THEME_DIR="/boot/grub/themes/mse"
+GRUB_LOGO_FILE="${GRUB_THEME_DIR}/logo.png"
+GRUB_BG_FILE="${GRUB_THEME_DIR}/background.png"
+GRUB_THEME_FILE="${GRUB_THEME_DIR}/theme.txt"
+GRUB_CFG_SNIPPET="/etc/default/grub.d/mse-theme.cfg"
+
+# GNOME dconf defaults
+DCONF_DIR="/etc/dconf/db/local.d"
+DCONF_LOCKS_DIR="/etc/dconf/db/local.d/locks"
+
+# Temp working dir
+WORK_DIR="/tmp/mse-branding"
+
+# =============================================================================
+# DERIVED PATHS — do not edit
+# =============================================================================
+
+LOGO_SVG="${WORK_DIR}/mse-logo-white.svg"
+LOGO_DARK_SVG="${WORK_DIR}/mse-logo-dark.svg"
+LOGO_PNG="${WORK_DIR}/mse-logo-white.png"
+LOGO_DARK_PNG="${WORK_DIR}/mse-logo-dark.png"
+GRUB_LOGO_PNG="${WORK_DIR}/mse-grub-logo.png"
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+require_tool() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "ERROR: required tool '$1' not found in chroot."
+        echo "       Add the package providing '$1' to your package lists."
+        exit 1
+    fi
+}
+
+download_asset() {
+    URL="$1"
+    DEST="$2"
+    echo "    Downloading: ${URL}"
+    if curl -fsSL --connect-timeout 15 --max-time 30 "${URL}" -o "${DEST}" 2>/dev/null; then
+        echo "    Saved to: ${DEST}"
+        return 0
+    else
+        echo "    WARNING: Download failed for ${URL}"
+        return 1
+    fi
+}
+
+# =============================================================================
+# PART 0: Verify tools and prepare workspace
+# =============================================================================
+
+echo "==> [0/4] Checking tools..."
+require_tool curl
+require_tool convert       # imagemagick
+require_tool rsvg-convert  # librsvg2-bin — SVG to PNG
+
+mkdir -p \
+    "${WORK_DIR}" \
+    "${WALLPAPER_DIR}" \
+    "${GRUB_THEME_DIR}" \
+    "${DCONF_DIR}" \
+    "${DCONF_LOCKS_DIR}"
+
+# =============================================================================
+# PART 1: Download MSE logo assets
+# =============================================================================
+
+echo "==> [1/4] Downloading MSE logo assets..."
+
+# White logo (for dark backgrounds)
+LOGO_OK=0
+if download_asset "${LOGO_SVG_URL}" "${LOGO_SVG}"; then
+    rsvg-convert -w 600 -h 200 "${LOGO_SVG}" -o "${LOGO_PNG}" 2>/dev/null && LOGO_OK=1
+fi
+
+# Dark logo (for light backgrounds / dconf)
+LOGO_DARK_OK=0
+if download_asset "${LOGO_DARK_URL}" "${LOGO_DARK_SVG}"; then
+    rsvg-convert -w 600 -h 200 "${LOGO_DARK_SVG}" -o "${LOGO_DARK_PNG}" 2>/dev/null && LOGO_DARK_OK=1
+fi
+
+# Fallback: generate a text-based logo with ImageMagick if download failed
+if [ "${LOGO_OK}" -eq 0 ]; then
+    echo "    Using fallback: generating logo with ImageMagick..."
+    convert -size 600x200 xc:"${MSE_BG_COLOUR}" \
+        -fill "${MSE_ACCENT_COLOUR}" \
+        -font DejaVu-Sans-Bold \
+        -pointsize 72 \
+        -gravity Center \
+        -annotate 0 "MSE" \
+        "${LOGO_PNG}"
+fi
+
+if [ "${LOGO_DARK_OK}" -eq 0 ]; then
+    convert -size 600x200 xc:white \
+        -fill "${MSE_BG_COLOUR}" \
+        -font DejaVu-Sans-Bold \
+        -pointsize 72 \
+        -gravity Center \
+        -annotate 0 "MSE" \
+        "${LOGO_DARK_PNG}"
+fi
+
+echo "    Logo assets ready."
+
+# =============================================================================
+# PART 2: Generate and install GNOME wallpaper
+# =============================================================================
+
+echo "==> [2/4] Generating GNOME wallpaper..."
+
+# Compose: navy background + centered white MSE logo + subtle text
+convert \
+    -size "${WALLPAPER_WIDTH}x${WALLPAPER_HEIGHT}" \
+    xc:"${MSE_BG_COLOUR}" \
+    \( "${LOGO_PNG}" -resize 500x167 \) \
+    -gravity Center \
+    -composite \
+    -fill "${MSE_ACCENT_COLOUR}" \
+    -font DejaVu-Sans \
+    -pointsize 24 \
+    -gravity South \
+    -annotate +0+60 "Master of Science in Engineering — Exam Environment" \
+    "${WALLPAPER_FILE}"
+
+echo "    Wallpaper installed: ${WALLPAPER_FILE}"
+
+# =============================================================================
+# PART 3: Generate and install GRUB theme
+# =============================================================================
+
+echo "==> [3/4] Generating GRUB bootloader theme..."
+
+# GRUB background (1024x768 — standard GRUB resolution)
+convert \
+    -size 1024x768 \
+    xc:"${MSE_BG_COLOUR}" \
+    \( "${LOGO_PNG}" -resize 400x133 \) \
+    -gravity North \
+    -geometry +0+80 \
+    -composite \
+    "${GRUB_BG_FILE}"
+
+# GRUB logo (used in theme.txt as logo image)
+convert "${LOGO_PNG}" -resize 300x100 "${GRUB_LOGO_FILE}"
+
+echo "    GRUB background: ${GRUB_BG_FILE}"
+echo "    GRUB logo: ${GRUB_LOGO_FILE}"
+
+# GRUB theme.txt
+cat > "${GRUB_THEME_FILE}" << 'EOF'
+# MSE GRUB Theme
+# Colours: MSE navy (#002B5C) background, white text
+
+title-text: ""
+desktop-image: "background.png"
+desktop-color: "#002B5C"
+
+# Boot menu
++ boot_menu {
+    left   = 15%
+    top    = 45%
+    width  = 70%
+    height = 40%
+    item_font      = "DejaVu Sans Regular 16"
+    item_color     = "#FFFFFF"
+    selected_item_color    = "#002B5C"
+    selected_item_pixmap_style = "select_bkg"
+    icon_width  = 32
+    icon_height = 32
+    item_height = 40
+    item_padding = 8
+    item_spacing = 4
+    scrollbar = true
+    scrollbar_width = 8
+    scrollbar_thumb = "scrollbar_thumb"
+}
+
+# MSE logo image at the top
++ image {
+    top  = 6%
+    left = 50%-150
+    width  = 300
+    height = 100
+    file = "logo.png"
+}
+
+# Countdown label
++ label {
+    top  = 88%
+    left = 0
+    width = 100%
+    align = "center"
+    font  = "DejaVu Sans Regular 14"
+    color = "#AAAAAA"
+    text  = "Booting in %d seconds..."
+}
+EOF
+
+echo "    GRUB theme.txt written."
+
+# Install GRUB config snippet to activate the theme
+mkdir -p "$(dirname ${GRUB_CFG_SNIPPET})"
+
+cat > "${GRUB_CFG_SNIPPET}" << EOF
+# MSE Exam GRUB theme
+GRUB_THEME="${GRUB_THEME_DIR}/theme.txt"
+GRUB_BACKGROUND="${GRUB_BG_FILE}"
+GRUB_TIMEOUT=10
+GRUB_TIMEOUT_STYLE=menu
+EOF
+
+echo "    GRUB config snippet: ${GRUB_CFG_SNIPPET}"
+
+# Regenerate GRUB config if update-grub is available in chroot
+if command -v update-grub >/dev/null 2>&1; then
+    update-grub 2>/dev/null || true
+    echo "    update-grub completed."
+else
+    echo "    INFO: update-grub not available in chroot — GRUB config will be"
+    echo "          regenerated at first boot via /etc/default/grub.d/ snippet."
+fi
+
+# =============================================================================
+# PART 4: Set GNOME wallpaper via dconf system defaults
+# =============================================================================
+
+echo "==> [4/4] Configuring GNOME wallpaper defaults via dconf..."
+
+cat > "${DCONF_DIR}/01-mse-wallpaper" << EOF
+[org/gnome/desktop/background]
+picture-uri='file://${WALLPAPER_FILE}'
+picture-uri-dark='file://${WALLPAPER_FILE}'
+picture-options='zoom'
+primary-color='${MSE_BG_COLOUR}'
+secondary-color='${MSE_BG_COLOUR}'
+
+[org/gnome/desktop/screensaver]
+picture-uri='file://${WALLPAPER_FILE}'
+primary-color='${MSE_BG_COLOUR}'
+EOF
+
+# Lock wallpaper so students cannot change it
+cat > "${DCONF_LOCKS_DIR}/mse-wallpaper-locks" << 'EOF'
+/org/gnome/desktop/background/picture-uri
+/org/gnome/desktop/background/picture-uri-dark
+/org/gnome/desktop/background/picture-options
+/org/gnome/desktop/screensaver/picture-uri
+EOF
+
+# Compile the dconf database
+dconf update 2>/dev/null || true
+echo "    dconf database updated."
+
+# =============================================================================
+# CLEANUP
+# =============================================================================
+
+rm -rf "${WORK_DIR}"
+echo "==> MSE branding complete."

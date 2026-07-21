@@ -1,4 +1,4 @@
-# Lernstick Debian Live – Build Environment: Getting Started
+# Lernstick Debian Live -- Build Environment: Getting Started
 
 > Buildscripts for school-centric Debian Live distributions  
 > Repository: https://github.com/Lernstick/lernstickAdvanced  
@@ -23,6 +23,13 @@ sudo apt install \
   systemd-container
 ```
 
+### Required by mse_branding.hook.chroot
+```bash
+sudo apt install \
+  imagemagick \
+  librsvg2-bin
+```
+
 Sufficient disk space (or RAM for tmpfs builds):
 
 | Build method | Space required |
@@ -44,6 +51,4 @@ To inspect available branches:
 ```bash
 git branch -a
 ```
-
----
 
