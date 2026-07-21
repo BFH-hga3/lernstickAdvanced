@@ -1,9 +1,0 @@
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=fileUpload
-Comment=Open SWITCHdrive file upload (private, locked)
-Exec=/usr/local/bin/firefox-upload.sh
-Icon=document-send
-Terminal=false
-Categories=Network;WebBrowser;
