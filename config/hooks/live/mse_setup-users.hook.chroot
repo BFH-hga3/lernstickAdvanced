@@ -2,9 +2,9 @@
 # setup_users.hook.chroot
 #
 # Runs during lb build (chroot stage). Hashes passwords at build time using
-# openssl passwd, then installs a systemd service that injects the hashes
-# into the live system at boot via chpasswd -e and useradd -p.
-# Cleartext passwords never appear in the final image.
+# mkpasswd with yescrypt (Debian 13 default), then installs a systemd service
+# that injects the hashes into the live system at boot via chpasswd -e
+# and useradd -p. Cleartext passwords never appear in the final image.
 
 set -e
 
@@ -25,17 +25,23 @@ SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 SETUP_SCRIPT="/usr/local/sbin/${SERVICE_NAME}.sh"
 
 # =============================================================================
-# PART 1: Hash passwords at build time
+# PART 1: Hash passwords at build time using yescrypt (Debian 13 default)
 # =============================================================================
 
-echo "==> [1/3] Hashing passwords at build time..."
+echo "==> [1/3] Hashing passwords at build time (yescrypt)..."
 
-# SHA-512 with a random salt — openssl passwd is always available in the chroot
-LIVE_USER_HASH=$(openssl passwd -6 "${LIVE_USER_PASSWORD}")
-ADMIN_USER_HASH=$(openssl passwd -6 "${ADMIN_USER_PASSWORD}")
+# mkpasswd (from the 'whois' package) supports yescrypt natively.
+# The resulting hash starts with $y$ and is accepted by PAM on Debian 13.
+if ! command -v mkpasswd >/dev/null 2>&1; then
+    echo "ERROR: mkpasswd not found. Add 'whois' to your package lists."
+    exit 1
+fi
 
-echo "    Hash generated for '${LIVE_USER}'."
-echo "    Hash generated for '${ADMIN_USER}'."
+LIVE_USER_HASH=$(mkpasswd --method=yescrypt "${LIVE_USER_PASSWORD}")
+ADMIN_USER_HASH=$(mkpasswd --method=yescrypt "${ADMIN_USER_PASSWORD}")
+
+echo "    Hash generated for '${LIVE_USER}' ($(echo ${LIVE_USER_HASH} | cut -c1-6)...)."
+echo "    Hash generated for '${ADMIN_USER}' ($(echo ${ADMIN_USER_HASH} | cut -c1-6)...)."
 
 # =============================================================================
 # PART 2: Install boot-time setup script (contains hashes, not cleartext)
@@ -46,12 +52,12 @@ echo "==> [2/3] Installing boot-time user setup script..."
 mkdir -p "$(dirname ${SETUP_SCRIPT})"
 
 # Hashes are expanded here at build time (unquoted EOF).
-# The resulting script on disk contains only the SHA-512 hashes.
+# The resulting script on disk contains only yescrypt hashes.
 cat > "${SETUP_SCRIPT}" << EOF
 #!/bin/sh
 # ${SERVICE_NAME}.sh
 # Runs at boot via systemd. Configures users using pre-hashed passwords.
-# Passwords were hashed at build time — no cleartext exists in this file.
+# Passwords were hashed at build time with yescrypt — no cleartext on disk.
 # Installed by: setup_users.hook.chroot
 
 set -e
@@ -103,7 +109,7 @@ if ! id "\${ADMIN_USER}" >/dev/null 2>&1; then
         --password "\${ADMIN_USER_HASH}" \\
         --groups sudo \\
         "\${ADMIN_USER}"
-    echo "User '\${ADMIN_USER}' created with hashed password."
+    echo "User '\${ADMIN_USER}' created with yescrypt password hash."
 else
     echo "User '\${ADMIN_USER}' already exists — updating password and groups."
     echo "\${ADMIN_USER}:\${ADMIN_USER_HASH}" | chpasswd -e

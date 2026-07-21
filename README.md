@@ -30,6 +30,12 @@ sudo apt install \
   librsvg2-bin
 ```
 
+### Required by setup_users.hook.chroot for yescrypt password hashing
+```bash
+sudo apt install \
+   whois
+```
+
 Sufficient disk space (or RAM for tmpfs builds):
 
 | Build method | Space required |
