@@ -96,7 +96,31 @@ cat > "${POLICY_FILE}" << 'EOF'
       "FeatureRecommendations":   false,
       "UrlbarInterventions":      false,
       "SkipOnboarding":           true
-    }
+    },
+    "PrivateBrowsingModeAvailability": 1,
+    "FirefoxHome": {
+      "Search":                   false,
+      "TopSites":                 false,
+      "SponsoredTopSites":        false,
+      "Highlights":               false,
+      "Pocket":                   false,
+      "SponsoredPocket":          false,
+      "Snippets":                 false,
+      "Locked":                   true
+    },
+    "ManagedBookmarks": [
+      {
+        "toplevel_name": "MSE Exam"
+      },
+      {
+        "name": "MSE Moodle",
+        "url":  "https://moodle.msengineering.ch"
+      },
+      {
+        "name": "MSE FileDrop",
+        "url":  "https://drive.switch.ch/index.php/s/NnNaOgN4lHaqe2M"
+      }
+    ]
   }
 }
 EOF
@@ -177,6 +201,13 @@ user_pref("browser.startup.firstrunSkipsHomepage",    true);
 user_pref("trailhead.firstrun.didSeeAboutWelcome",    true);
 user_pref("datareporting.healthreport.uploadEnabled", false);
 user_pref("app.shield.optoutstudies.enabled",         false);
+
+// --- Private browsing welcome page ---
+// Prevents Firefox from opening the mozilla.org private browsing
+// info tab on startup, which is blocked by the lernstick firewall.
+user_pref("browser.privatebrowsing.welcomeShown",     true);
+user_pref("privacy.trackingprotection.introCount",    20);
+user_pref("privacy.trackingprotection.pbmode.enabled", false);
 EOF
 
 echo "    user.js written: ${FF_USER_JS}"
@@ -191,39 +222,15 @@ echo "    user.js written: ${FF_USER_JS}"
 #   2. Set user.js prefs to import it on first run and show the toolbar
 # Firefox has supported this import mechanism since version 1.0.
 
-echo "==> [3/4] Installing bookmarks (bookmarks.html + user.js import)..."
-
-# Netscape Bookmark File with MSE Moodle and MSE FileDrop on the toolbar.
-# base64-encoded to keep the hook self-contained.
-BOOKMARKS_B64="PCFET0NUWVBFIE5FVFNDQVBFLUJvb2ttYXJrLWZpbGUtMT4KPCEtLSBUaGlzIGlzIGFuIGF1dG9tYXRpY2FsbHkgZ2VuZXJhdGVkIGZpbGUuCiAgICAgSXQgd2lsbCBiZSByZWFkIGFuZCBvdmVyd3JpdHRlbi4KICAgICBETyBOT1QgRURJVCEgLS0+CjxNRVRBIEhUVFAtRVFVSVY9IkNvbnRlbnQtVHlwZSIgQ09OVEVOVD0idGV4dC9odG1sOyBjaGFyc2V0PVVURi04Ij4KPFRJVExFPkJvb2ttYXJrczwvVElUTEU+CjxIMT5Cb29rbWFya3MgTWVudTwvSDE+CjxETD48cD4KICAgIDxEVD48SDMgQUREX0RBVEU9IjAiIExBU1RfTU9ESUZJRUQ9IjAiIFBFUlNPTkFMX1RPT0xCQVJfRk9MREVSPSJ0cnVlIj5Cb29rbWFya3MgVG9vbGJhcjwvSDM+CiAgICA8REw+PHA+CiAgICAgICAgPERUPjxBIEhSRUY9Imh0dHBzOi8vbW9vZGxlLm1zZW5naW5lZXJpbmcuY2giIEFERF9EQVRFPSIwIj5NU0UgTW9vZGxlPC9BPgogICAgICAgIDxEVD48QSBIUkVGPSJodHRwczovL2RyaXZlLnN3aXRjaC5jaC9pbmRleC5waHAvcy9Obk5hT2dONGxIYXFlMk0iIEFERF9EQVRFPSIwIj5NU0UgRmlsZURyb3A8L0E+CiAgICA8L0RMPjxwPgo8L0RMPjxwPgo="
-
-BOOKMARKS_FILE="${FF_PROFILE_DIR}/bookmarks.html"
-
-echo "${BOOKMARKS_B64}" | tr -d ' \n' | base64 -d > "${BOOKMARKS_FILE}"
-echo "    bookmarks.html written: ${BOOKMARKS_FILE}"
-
-# Append bookmark import prefs to user.js
-# - browser.bookmarks.file: path to the bookmarks.html to import
-# - browser.places.importBookmarksHTML: trigger import on next start
-# - browser.bookmarks.restore_default_bookmarks: false prevents overwrite
-cat >> "${FF_USER_JS}" << EOF
-
-// --- Bookmark import (written by firefox_setup.hook.chroot PART 3) ---
-// Import bookmarks.html on first run, then clear the flag.
-user_pref("browser.bookmarks.file",                    "${BOOKMARKS_FILE}");
-user_pref("browser.places.importBookmarksHTML",        true);
-user_pref("browser.bookmarks.restore_default_bookmarks", false);
-EOF
-
-echo "    Bookmark import prefs appended to: ${FF_USER_JS}"
-
-# Firefox will create places.sqlite fresh on first run
-# and populate it from bookmarks.html via the import pref above.
-rm -f "${FF_PROFILE_DIR}/places.sqlite"
-# The following heredoc close token from the old approach is gone.
-# Jump directly to PART 4.
-true
-echo "    Bookmarks configured via HTML import."
+echo "==> [3/4] Bookmarks configured via ManagedBookmarks enterprise policy..."
+# Bookmarks are now set via the ManagedBookmarks key in policies.json.
+# This is the official Firefox enterprise mechanism — it works in all
+# modes including private browsing, requires no import, survives session
+# wipes, and cannot be removed by the user.
+# The bookmarks.html + browser.places.importBookmarksHTML approach was
+# unreliable in private browsing autostart mode because Firefox uses a
+# temporary in-memory database and does not process the import pref.
+echo "    MSE Moodle and MSE FileDrop bookmarks set via policies.json."
 
 # =============================================================================
 # PART 4: Desktop launcher
@@ -329,49 +336,60 @@ EOF
 echo "    GNOME dock configured: ${DCONF_DOCK_FILE}"
 
 # =============================================================================
-# Install live-config boot hook to mark desktop launcher as trusted
+# Install XDG autostart script to mark desktop launcher as trusted
 # =============================================================================
 # GNOME requires .desktop files on the Desktop to carry a user.trusted
-# extended attribute to be launchable without a "Mark as Executable" dialog.
-# xattrs are not preserved through skel copy at login, so we set them via
-# a live-config hook that runs after the user home is created.
+# extended attribute to be launchable without an "Allow Executing" dialog.
+# xattrs are not preserved when skel is copied to /home/user/ at login.
+# A live-config boot hook runs too early (before Desktop is populated).
+# The correct fix is an XDG autostart script that runs at GNOME session
+# start — at which point Desktop/ is fully populated and xattrs can be set.
+# The script deletes itself after first run so it only executes once.
 
-mkdir -p /lib/live/config
+TRUST_SCRIPT="/etc/skel/.local/bin/mse-trust-launcher.sh"
+TRUST_AUTOSTART="/etc/skel/.config/autostart/mse-trust-launcher.desktop"
 
-cat > /lib/live/config/0600-mse-trust-launcher << 'EOF'
+mkdir -p /etc/skel/.local/bin
+mkdir -p /etc/skel/.config/autostart
+
+cat > "${TRUST_SCRIPT}" << 'EOF'
 #!/bin/sh
-# 0600-mse-trust-launcher — live-config hook
-# Sets the user.trusted xattr on the MSE exam browser desktop launcher
-# so GNOME treats it as a trusted executable application.
-# Runs after 0030-user-setup has created the live user home directory.
+# mse-trust-launcher.sh
+# Marks the MSE exam browser desktop launcher as trusted so GNOME
+# launches it directly without an "Allow Executing" dialog.
+# Runs once at first GNOME session start via XDG autostart.
+# Removes itself after running so it never appears again.
 
-STAMP="/var/lib/live/config/0600-mse-trust-launcher"
-[ -e "${STAMP}" ] && exit 0
+LAUNCHER="${HOME}/Desktop/mse-exam-browser.desktop"
+SELF_AUTOSTART="${HOME}/.config/autostart/mse-trust-launcher.desktop"
+SELF_SCRIPT="${HOME}/.local/bin/mse-trust-launcher.sh"
 
-LAUNCHER="/home/user/Desktop/mse-exam-browser.desktop"
-
-# Wait for the desktop file to exist (home is populated from skel)
-RETRIES=10
-while [ ${RETRIES} -gt 0 ] && [ ! -e "${LAUNCHER}" ]; do
-    sleep 1
-    RETRIES=$((RETRIES - 1))
-done
-
-if [ -e "${LAUNCHER}" ]; then
+# Set the trusted xattr — tells GNOME Nautilus this file is safe to execute
+if [ -f "${LAUNCHER}" ]; then
     if command -v attr >/dev/null 2>&1; then
-        attr -s trusted -V "" "${LAUNCHER}" 2>/dev/null || true
+        attr -s trusted -V "" "${LAUNCHER}"
     elif command -v setfattr >/dev/null 2>&1; then
-        setfattr -n user.trusted -v "" "${LAUNCHER}" 2>/dev/null || true
+        setfattr -n user.trusted -v "" "${LAUNCHER}"
     fi
-    echo "MSE: desktop launcher marked as trusted."
-else
-    echo "MSE: WARNING — launcher not found at ${LAUNCHER}"
 fi
 
-mkdir -p /var/lib/live/config
-touch "${STAMP}"
+# Self-destruct: remove autostart entry and script after first run
+rm -f "${SELF_AUTOSTART}"
+rm -f "${SELF_SCRIPT}"
 EOF
 
-chmod 755 /lib/live/config/0600-mse-trust-launcher
-echo "    live-config trust hook installed: /lib/live/config/0600-mse-trust-launcher"
+chmod 755 "${TRUST_SCRIPT}"
+
+cat > "${TRUST_AUTOSTART}" << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=MSE Trust Launcher
+Comment=Marks MSE exam browser as trusted on first login
+Exec=/bin/sh -c '${HOME}/.local/bin/mse-trust-launcher.sh'
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=2
+NoDisplay=true
+EOF
+
+echo "    XDG autostart trust script installed: ${TRUST_AUTOSTART}"
 echo "==> Firefox setup complete."
