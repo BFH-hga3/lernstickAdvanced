@@ -17,9 +17,15 @@ lernstick-libreoffice-writer
 libreoffice
 libreoffice-base
 libreoffice-calc
+libreoffice-writer
 #libreoffice-draw
+#libreoffice-impress
+#libreoffice-math
+#libreoffice-report-builder
+#libreoffice-sdbc-hsqldb
 libreoffice-gnome
 libreoffice-gtk3
+## Packages to install helper docs
 #libreoffice-help-de
 #libreoffice-help-en-us
 #libreoffice-help-es
@@ -27,7 +33,7 @@ libreoffice-gtk3
 #libreoffice-help-it
 #libreoffice-help-pt-br
 #libreoffice-help-ru
-#libreoffice-impress
+## Packages of interface language
 libreoffice-l10n-de
 #libreoffice-l10n-es
 #libreoffice-l10n-fa
@@ -39,16 +45,12 @@ libreoffice-l10n-en-us
 #libreoffice-l10n-kmr
 #libreoffice-l10n-pt-br
 #libreoffice-l10n-ru
-#libreoffice-math
-#libreoffice-report-builder
-#libreoffice-sdbc-hsqldb
 #libreoffice-style-breeze
 #libreoffice-style-elementary
 #libreoffice-style-karasa-jaga
 #libreoffice-style-sifr
 #libreoffice-style-sukapura
 #libreoffice-templatepack
-libreoffice-writer
 # German (covers de_CH)
 hunspell-de-ch
 hyphen-de
@@ -61,9 +63,9 @@ mythes-fr
 hunspell-it
 hyphen-it
 mythes-it
-# English GB
+# English GB + US
 hunspell-en-gb
-hyphen-en-gb
-mythes-en-us
-# English US
 hunspell-en-us
+hyphen-en-gb
+hyphen-en-us
+mythes-en-us
