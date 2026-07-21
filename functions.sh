@@ -131,7 +131,7 @@ build_image()
 		--debootstrap-options "--include=ca-certificates,openssl" \
 		--distribution trixie \
 		--firmware-chroot false \
-		--iso-volume "lernstick${ISO_SUFFIX} ${TODAY}" \
+		--iso-volume "${ISO_PREFIX}-${ISO_SUFFIX}_${TODAY}" \
 		--linux-packages linux-image-6.18.15+deb13 \
 		--mirror-binary ${MIRROR_SYSTEM} \
 		--mirror-binary-security ${MIRROR_SECURITY_SYSTEM} \
@@ -147,7 +147,7 @@ build_image()
 	ISO_FILE="live-image-amd64.hybrid.iso"
 	if [ -f ${ISO_FILE} ]
 	then
-		PREFIX="lernstick_debian13${ISO_SUFFIX}_${TODAY}"
+		PREFIX="${ISO_PREFIX}_deb-13_${ISO_SUFFIX}_${TODAY}"
 		IMAGE="${PREFIX}.iso"
 		mv ${ISO_FILE} ${IMAGE}
 		# we must update the zsync file because we renamed the iso file

@@ -2,7 +2,8 @@
 
 set -e
 
-ISO_SUFFIX="_exam"
+ISO_PREFIX="MSE"
+ISO_SUFFIX="vs"
 SOURCE="false"
 
 . ./functions.sh
