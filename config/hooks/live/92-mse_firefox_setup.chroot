@@ -283,6 +283,8 @@ Categories=Network;WebBrowser;
 StartupNotify=true
 EOF
 
+chmod +x ${LAUNCHER}
+
 echo "    Launcher installed: ${LAUNCHER}"
 
 # --- Symlink into skel Desktop so it appears for the live user ---
