@@ -3,8 +3,7 @@
 # Further minimises the exam environment by removing optional GNOME packages.
 # Currently disabled — remove the exit 0 to enable for minimal exam builds.
 
-
-apt purge -y \
+apt-get purge -y \
     baobab \
     gnome-calculator \
     gnome-characters \
