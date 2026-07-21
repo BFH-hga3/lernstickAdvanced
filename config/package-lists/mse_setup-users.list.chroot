@@ -1,0 +1,2 @@
+# Required by setup_users.hook.chroot for yescrypt password hashing
+whois

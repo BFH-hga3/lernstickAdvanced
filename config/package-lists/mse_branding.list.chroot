@@ -1,0 +1,3 @@
+# Required by mse_branding.hook.chroot
+imagemagick
+librsvg2-bin
