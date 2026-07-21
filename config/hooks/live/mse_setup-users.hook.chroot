@@ -7,8 +7,9 @@
 #   3. Grant sysadmin sudo via /etc/sudoers.d/mse-exam (baked at build time)
 #   4. Disable live-config's 0040-sudo component (prevents NOPASSWD for user)
 #
-# Passwords are hashed at build time with yescrypt. No cleartext in the image.
-# No systemd service needed — everything runs inside live-config's boot sequence.
+# Passwords are read from environment variables set in the `constants` file
+# (which is gitignored). If the variables are absent, default values are used.
+# Passwords are hashed at build time with yescrypt — no cleartext in the image.
 
 set -e
 
@@ -17,12 +18,16 @@ set -e
 # =============================================================================
 
 LIVE_USER="user"
-LIVE_USER_PASSWORD="viewing"
-
 ADMIN_USER="sysadmin"
-ADMIN_USER_PASSWORD="LetMeIn!"
 ADMIN_USER_GECOS="System Administrator"
 ADMIN_USER_SHELL="/bin/bash"
+
+# Passwords: read from environment (set in constants) or fall back to defaults.
+# Set these in your constants file (gitignored):
+#   export MSE_USER_PASSWORD="your-secret"
+#   export MSE_ADMIN_PASSWORD="your-secret"
+LIVE_USER_PASSWORD="${MSE_USER_PASSWORD:-live}"
+ADMIN_USER_PASSWORD="${MSE_ADMIN_PASSWORD:-sysadmin}"
 
 # live-config hook directory
 LIVE_CONFIG_DIR="/lib/live/config"
@@ -50,6 +55,19 @@ echo "==> [1/4] Hashing passwords at build time (yescrypt)..."
 if ! command -v mkpasswd >/dev/null 2>&1; then
     echo "ERROR: mkpasswd not found. Add 'whois' to your package lists."
     exit 1
+fi
+
+# Report whether passwords came from environment or defaults
+if [ -n "${MSE_USER_PASSWORD}" ]; then
+    echo "    '${LIVE_USER}': using password from MSE_USER_PASSWORD."
+else
+    echo "    '${LIVE_USER}': MSE_USER_PASSWORD not set — using default."
+fi
+
+if [ -n "${MSE_ADMIN_PASSWORD}" ]; then
+    echo "    '${ADMIN_USER}': using password from MSE_ADMIN_PASSWORD."
+else
+    echo "    '${ADMIN_USER}': MSE_ADMIN_PASSWORD not set — using default."
 fi
 
 LIVE_USER_HASH=$(mkpasswd --method=yescrypt "${LIVE_USER_PASSWORD}")
@@ -170,7 +188,6 @@ echo "    Installed: ${PASSWD_HOOK}"
 
 echo "==> [4/4] Installing sudoers policy and disabling 0040-sudo..."
 
-# Sudoers policy baked into the image at build time
 mkdir -p /etc/sudoers.d
 
 cat > "${SUDOERS_FILE}" << EOF
@@ -189,7 +206,6 @@ chown root:root "${SUDOERS_FILE}"
 visudo -c -f "${SUDOERS_FILE}"
 echo "    Sudoers policy validated: ${SUDOERS_FILE}"
 
-# Disable live-config's 0040-sudo component which would grant user NOPASSWD
 mkdir -p "${LIVE_CONF_DIR}"
 
 cat > "${LIVE_CONF_FILE}" << EOF
