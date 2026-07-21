@@ -147,7 +147,7 @@ build_image()
 	ISO_FILE="live-image-amd64.hybrid.iso"
 	if [ -f ${ISO_FILE} ]
 	then
-		PREFIX="${ISO_PREFIX}_deb-13_${ISO_SUFFIX}_${TODAY}"
+		PREFIX="${ISO_PREFIX}_deb-13-${ISO_SUFFIX}_${TODAY}"
 		IMAGE="${PREFIX}.iso"
 		mv ${ISO_FILE} ${IMAGE}
 		# we must update the zsync file because we renamed the iso file
