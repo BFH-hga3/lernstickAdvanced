@@ -131,7 +131,6 @@ cat > "${SYSTEM_SERVICE_FILE}" << EOF
 Description=MSE Exam Home Wipe on Shutdown (fallback)
 DefaultDependencies=no
 Before=shutdown.target reboot.target halt.target
-After=network.target
 
 [Service]
 Type=oneshot

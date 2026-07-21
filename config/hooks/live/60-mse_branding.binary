@@ -30,9 +30,12 @@ MSE_BG_COLOUR="#002B5C"
 # DERIVED PATHS — do not edit
 # =============================================================================
 
-# Source: assets staged by chroot hook inside the squashfs
-# In binary stage, the squashfs is mounted/accessible via chroot/
-GRUB_ASSET_SRC="chroot/usr/share/mse-branding/grub"
+# Source: assets staged by chroot hook inside the squashfs.
+# lb binary hooks run with CWD = binary/ tree, NOT the build root.
+# The chroot tree is at ../chroot/ relative to binary/.
+# Derive the absolute build root path to be unambiguous.
+BUILD_ROOT="$(dirname "$(pwd)")"
+GRUB_ASSET_SRC="${BUILD_ROOT}/chroot/usr/share/mse-branding/grub"
 
 # Destination: ISO binary tree (relative to binary tree root)
 GRUB_THEME_DEST="boot/grub/themes/mse"

@@ -29,11 +29,30 @@ ADMIN_USER="sysadmin"
 ADMIN_USER_GECOS="System Administrator"
 ADMIN_USER_SHELL="/bin/bash"
 
-# Passwords from environment (set in constants, gitignored) or defaults.
+# Passwords from environment (set in constants, gitignored).
 # In constants: export MSE_USER_PASSWORD="secret"
 #               export MSE_ADMIN_PASSWORD="secret"
-LIVE_USER_PASSWORD="${MSE_USER_PASSWORD:-live}"
-ADMIN_USER_PASSWORD="${MSE_ADMIN_PASSWORD:-sysadmin}"
+# Fail loudly if not set — never silently use weak defaults in production.
+if [ -z "${MSE_USER_PASSWORD}" ]; then
+    echo "ERROR: MSE_USER_PASSWORD not set in constants."
+    echo "       Set 'export MSE_USER_PASSWORD=...' in your constants file."
+    exit 1
+fi
+if [ -z "${MSE_ADMIN_PASSWORD}" ]; then
+    echo "ERROR: MSE_ADMIN_PASSWORD not set in constants."
+    echo "       Set 'export MSE_ADMIN_PASSWORD=...' in your constants file."
+    exit 1
+fi
+if [ ${#MSE_USER_PASSWORD} -lt 4 ]; then
+    echo "ERROR: MSE_USER_PASSWORD is too short (minimum 8 characters)."
+    exit 1
+fi
+if [ ${#MSE_ADMIN_PASSWORD} -lt 8 ]; then
+    echo "ERROR: MSE_ADMIN_PASSWORD is too short (minimum 8 characters)."
+    exit 1
+fi
+LIVE_USER_PASSWORD="${MSE_USER_PASSWORD}"
+ADMIN_USER_PASSWORD="${MSE_ADMIN_PASSWORD}"
 
 LIVE_CONFIG_DIR="/lib/live/config"
 SUDOERS_FILE="/etc/sudoers.d/mse-exam"
@@ -58,17 +77,8 @@ if ! command -v mkpasswd >/dev/null 2>&1; then
     exit 1
 fi
 
-if [ -n "${MSE_USER_PASSWORD}" ]; then
-    echo "    '${LIVE_USER}': using password from MSE_USER_PASSWORD."
-else
-    echo "    '${LIVE_USER}': MSE_USER_PASSWORD not set — using default."
-fi
-
-if [ -n "${MSE_ADMIN_PASSWORD}" ]; then
-    echo "    '${ADMIN_USER}': using password from MSE_ADMIN_PASSWORD."
-else
-    echo "    '${ADMIN_USER}': MSE_ADMIN_PASSWORD not set — using default."
-fi
+echo "    '${LIVE_USER}': password from MSE_USER_PASSWORD."
+echo "    '${ADMIN_USER}': password from MSE_ADMIN_PASSWORD."
 
 LIVE_USER_HASH=$(mkpasswd --method=yescrypt "${LIVE_USER_PASSWORD}")
 ADMIN_USER_HASH=$(mkpasswd --method=yescrypt "${ADMIN_USER_PASSWORD}")

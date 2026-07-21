@@ -14,6 +14,8 @@ export MIRROR_BUILD="http://localhost:9999/debian"
 export MIRROR_SYSTEM="http://deb.debian.org/debian"
 export MIRROR_SECURITY_SYSTEM="http://security.debian.org/"
 
-## constants — NOT tracked by git
-#export MSE_USER_PASSWORD="live"
-#export MSE_ADMIN_PASSWORD="sysadmin"
+## MSE exam passwords — MUST be set before building
+## These are NOT tracked by git (constants is in .gitignore)
+## Minimum 8 characters required — build will fail loudly if unset
+#export MSE_USER_PASSWORD="change-me-before-building"
+#export MSE_ADMIN_PASSWORD="change-me-before-building"

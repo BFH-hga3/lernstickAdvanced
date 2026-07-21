@@ -92,6 +92,10 @@ apt-get purge -y gnome-software
 
 echo "==> [6/6] Purging build-time tools..."
 
+# NOTE: curl is intentionally NOT purged here.
+# It is needed at runtime by /usr/local/bin/fetch-template.sh
+# which downloads the MSE exam template at every student login.
+
 apt-get purge -y whois
 apt-get purge -y imagemagick librsvg2-bin
 

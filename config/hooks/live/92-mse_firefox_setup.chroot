@@ -226,9 +226,6 @@ true
 echo "    Bookmarks configured via HTML import."
 
 # =============================================================================
-# PART 3b (padding — keeping part numbers consistent)
-# =============================================================================
-# =============================================================================
 # PART 4: Desktop launcher
 # =============================================================================
 
@@ -282,8 +279,6 @@ Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 EOF
-
-chmod +x ${LAUNCHER}
 
 echo "    Launcher installed: ${LAUNCHER}"
 
