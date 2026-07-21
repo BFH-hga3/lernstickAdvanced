@@ -1,15 +1,20 @@
 #!/bin/sh
 # setup_users.hook.chroot
 #
-# Uses live-config's own infrastructure to:
-#   1. Set passwords for "user" and "sysadmin" via a live-config passwd hook
-#   2. Create "sysadmin" via a live-config useradd hook
-#   3. Grant sysadmin sudo via /etc/sudoers.d/mse-exam (baked at build time)
-#   4. Disable live-config's 0040-sudo component (prevents NOPASSWD for user)
+# Uses live-config's own debconf/user-setup infrastructure to configure users:
 #
-# Passwords are read from environment variables set in the `constants` file
-# (which is gitignored). If the variables are absent, default values are used.
-# Passwords are hashed at build time with yescrypt — no cleartext in the image.
+#   - Runs a live-config hook at 0020 (before 0030-user-setup) to inject the
+#     hashed password for "user" via debconf-set-selections, exactly as
+#     0030-user-setup does internally with its default password.
+#
+#   - Runs a live-config hook at 1000 (after 0030) to create "sysadmin" and
+#     set its password via the same debconf mechanism (user-setup-apply).
+#
+#   - Disables 0040-sudo and installs a clean sudoers policy.
+#
+# Passwords are read from MSE_USER_PASSWORD / MSE_ADMIN_PASSWORD env vars
+# (set in constants, gitignored). Falls back to defaults if unset or empty.
+# Hashed at build time with yescrypt — no cleartext in the final image.
 
 set -e
 
@@ -22,20 +27,14 @@ ADMIN_USER="sysadmin"
 ADMIN_USER_GECOS="System Administrator"
 ADMIN_USER_SHELL="/bin/bash"
 
-# Passwords: read from environment (set in constants) or fall back to defaults.
-# Set these in your constants file (gitignored):
-#   export MSE_USER_PASSWORD="your-secret"
-#   export MSE_ADMIN_PASSWORD="your-secret"
+# Passwords from environment (set in constants, gitignored) or defaults.
+# In constants: export MSE_USER_PASSWORD="secret"
+#               export MSE_ADMIN_PASSWORD="secret"
 LIVE_USER_PASSWORD="${MSE_USER_PASSWORD:-live}"
 ADMIN_USER_PASSWORD="${MSE_ADMIN_PASSWORD:-sysadmin}"
 
-# live-config hook directory
 LIVE_CONFIG_DIR="/lib/live/config"
-
-# Sudoers file
 SUDOERS_FILE="/etc/sudoers.d/mse-exam"
-
-# live-config component disable config
 LIVE_CONF_DIR="/etc/live/config.conf.d"
 LIVE_CONF_FILE="${LIVE_CONF_DIR}/mse-exam.conf"
 
@@ -43,8 +42,8 @@ LIVE_CONF_FILE="${LIVE_CONF_DIR}/mse-exam.conf"
 # DERIVED PATHS — do not edit
 # =============================================================================
 
-PASSWD_HOOK="${LIVE_CONFIG_DIR}/2000-mse-passwd"
-ADDUSER_HOOK="${LIVE_CONFIG_DIR}/1000-mse-adduser"
+PRE_HOOK="${LIVE_CONFIG_DIR}/0020-mse-user-password"
+POST_HOOK="${LIVE_CONFIG_DIR}/1000-mse-adduser"
 
 # =============================================================================
 # PART 1: Hash passwords at build time
@@ -57,7 +56,6 @@ if ! command -v mkpasswd >/dev/null 2>&1; then
     exit 1
 fi
 
-# Report whether passwords came from environment or defaults
 if [ -n "${MSE_USER_PASSWORD}" ]; then
     echo "    '${LIVE_USER}': using password from MSE_USER_PASSWORD."
 else
@@ -77,86 +75,89 @@ echo "    Hashed '${LIVE_USER}'."
 echo "    Hashed '${ADMIN_USER}'."
 
 # =============================================================================
-# PART 2: Install live-config adduser hook (runs at 1000, before passwd at 2000)
-# Creates sysadmin after user-setup (0030) has finished.
+# PART 2: Install 0020-mse-user-password
+# Runs BEFORE 0030-user-setup. Injects our hash into debconf so that
+# user-setup-apply picks it up instead of the default "live" password.
+# Mirrors exactly what 0030-user-setup does internally.
 # =============================================================================
 
-echo "==> [2/4] Installing live-config adduser hook (${ADDUSER_HOOK})..."
+echo "==> [2/4] Installing pre-hook ${PRE_HOOK}..."
 
 mkdir -p "${LIVE_CONFIG_DIR}"
 
-cat > "${ADDUSER_HOOK}" << EOF
+cat > "${PRE_HOOK}" << EOF
+#!/bin/sh
+# 0020-mse-user-password — live-config hook
+# Injects the MSE exam password hash into debconf before 0030-user-setup runs.
+# user-setup-apply reads passwd/user-password-crypted from debconf and writes
+# it directly into /etc/shadow — this is the correct live-config mechanism.
+
+. /usr/lib/live/config.sh
+
+STAMP="/var/lib/live/config/0020-mse-user-password"
+[ -e "\${STAMP}" ] && exit 0
+
+LIVE_USER_HASH="${LIVE_USER_HASH}"
+
+echo "MSE: injecting user password hash into debconf..."
+
+# Inject via both mechanisms to cover user-setup and live-debconfig variants
+cat > /tmp/mse-passwd.cfg << DEBCONF
+user-setup passwd/user-password-crypted string \${LIVE_USER_HASH}
+live-debconfig live-debconfig/passwd/user-password-crypted string \${LIVE_USER_HASH}
+DEBCONF
+
+debconf-set-selections /tmp/mse-passwd.cfg
+rm -f /tmp/mse-passwd.cfg
+
+echo "MSE: password hash injected."
+
+mkdir -p /var/lib/live/config
+touch "\${STAMP}"
+EOF
+
+chmod 755 "${PRE_HOOK}"
+echo "    Installed: ${PRE_HOOK}"
+
+# =============================================================================
+# PART 3: Install 1000-mse-adduser
+# Runs AFTER 0030-user-setup. Creates sysadmin and sets its password
+# directly via usermod (no debconfig equivalent for extra users).
+# Also cleans up any sudo artefacts from 0040-sudo if it slipped through.
+# =============================================================================
+
+echo "==> [3/4] Installing post-hook ${POST_HOOK}..."
+
+cat > "${POST_HOOK}" << EOF
 #!/bin/sh
 # 1000-mse-adduser — live-config hook
-# Creates the sysadmin account as part of the live-config boot sequence.
-# Runs after 0030-user-setup, before 2000-mse-passwd.
+# Creates sysadmin user and sets its password after live user exists.
+# Also removes /etc/sudoers.d/live written by 0040-sudo if present.
 
 STAMP="/var/lib/live/config/1000-mse-adduser"
 [ -e "\${STAMP}" ] && exit 0
 
 ADMIN_USER="${ADMIN_USER}"
+ADMIN_USER_HASH="${ADMIN_USER_HASH}"
 ADMIN_USER_GECOS="${ADMIN_USER_GECOS}"
 ADMIN_USER_SHELL="${ADMIN_USER_SHELL}"
+LIVE_USER="${LIVE_USER}"
+
+echo "MSE: creating sysadmin user..."
 
 if ! id "\${ADMIN_USER}" >/dev/null 2>&1; then
     useradd \\
         --create-home \\
         --shell "\${ADMIN_USER_SHELL}" \\
         --comment "\${ADMIN_USER_GECOS}" \\
+        --password "\${ADMIN_USER_HASH}" \\
         --groups sudo \\
         "\${ADMIN_USER}"
-    echo "MSE: created '\${ADMIN_USER}'."
+    echo "  Created '\${ADMIN_USER}'."
 else
-    usermod -aG sudo "\${ADMIN_USER}"
-    echo "MSE: '\${ADMIN_USER}' already exists — ensured sudo membership."
-fi
-
-mkdir -p /var/lib/live/config
-touch "\${STAMP}"
-EOF
-
-chmod 755 "${ADDUSER_HOOK}"
-echo "    Installed: ${ADDUSER_HOOK}"
-
-# =============================================================================
-# PART 3: Install live-config passwd hook (runs at 2000)
-# Sets hashed passwords for both users after they exist.
-# =============================================================================
-
-echo "==> [3/4] Installing live-config passwd hook (${PASSWD_HOOK})..."
-
-cat > "${PASSWD_HOOK}" << EOF
-#!/bin/sh
-# 2000-mse-passwd — live-config hook
-# Sets yescrypt-hashed passwords for live user and sysadmin.
-# Also removes live user from sudo group and cleans up 0040-sudo artefacts.
-# Passwords were hashed at build time — no cleartext in this file.
-
-STAMP="/var/lib/live/config/2000-mse-passwd"
-[ -e "\${STAMP}" ] && exit 0
-
-LIVE_USER="${LIVE_USER}"
-LIVE_USER_HASH="${LIVE_USER_HASH}"
-
-ADMIN_USER="${ADMIN_USER}"
-ADMIN_USER_HASH="${ADMIN_USER_HASH}"
-
-echo "MSE: setting passwords..."
-
-# Set password for live user
-if id "\${LIVE_USER}" >/dev/null 2>&1; then
-    usermod --password "\${LIVE_USER_HASH}" "\${LIVE_USER}"
-    echo "  Password set for '\${LIVE_USER}'."
-else
-    echo "  WARNING: '\${LIVE_USER}' not found."
-fi
-
-# Set password for sysadmin
-if id "\${ADMIN_USER}" >/dev/null 2>&1; then
     usermod --password "\${ADMIN_USER_HASH}" "\${ADMIN_USER}"
-    echo "  Password set for '\${ADMIN_USER}'."
-else
-    echo "  WARNING: '\${ADMIN_USER}' not found."
+    usermod -aG sudo "\${ADMIN_USER}"
+    echo "  Updated '\${ADMIN_USER}'."
 fi
 
 # Remove live user from sudo group (exam safety)
@@ -173,17 +174,17 @@ fi
 
 echo "  Groups: \${LIVE_USER}=\$(groups \${LIVE_USER} 2>/dev/null)"
 echo "  Groups: \${ADMIN_USER}=\$(groups \${ADMIN_USER} 2>/dev/null)"
-echo "MSE: password setup complete."
+echo "MSE: sysadmin setup complete."
 
 mkdir -p /var/lib/live/config
 touch "\${STAMP}"
 EOF
 
-chmod 755 "${PASSWD_HOOK}"
-echo "    Installed: ${PASSWD_HOOK}"
+chmod 755 "${POST_HOOK}"
+echo "    Installed: ${POST_HOOK}"
 
 # =============================================================================
-# PART 4: Sudoers policy + disable 0040-sudo component
+# PART 4: Sudoers policy + disable 0040-sudo
 # =============================================================================
 
 echo "==> [4/4] Installing sudoers policy and disabling 0040-sudo..."
