@@ -1,0 +1,214 @@
+#!/bin/sh
+# mse_download_template.hook.chroot
+#
+# Consolidates all MSE LibreOffice template setup in one hook:
+#   1. Downloads the exam template from SWITCHdrive (with retries)
+#   2. On failure: decodes an embedded minimal valid OTT as safe net
+#   3. Installs fetch-template.sh to refresh the template at every login
+#   4. Installs the XDG autostart entry to trigger fetch-template.sh
+#
+# All configurable properties are defined at the top for maintainability.
+# No binary files or separate scripts needed in the build tree.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+LIVE_USER="user"
+TEMPLATE_DIR="/usr/local/share/templates"
+TEMPLATE_FILE="${TEMPLATE_DIR}/mse-default.ott"
+TEMPLATE_DEST_NAME="MSE_FullName_ModuleCode.ott"
+NEXTCLOUD_URL="https://drive.switch.ch/index.php/s/tQLKBilUJ7l8DLj/download"
+FETCH_SCRIPT="/usr/local/bin/fetch-template.sh"
+AUTOSTART_ENTRY="/etc/xdg/autostart/fetch-template.desktop"
+MAX_RETRIES=3
+RETRY_DELAY=5
+NM_ONLINE_TIMEOUT=10
+
+# =============================================================================
+# PART 1: Download template with retries, fall back to embedded OTT
+# =============================================================================
+
+# Embedded minimal valid OTT (base64)
+# ZIP-based ODF text template; mimetype stored uncompressed per ODF spec.
+# Decoded at build time only if all download attempts fail.
+FALLBACK_B64="
+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
+AAQAAAAAUEsFBgAAAAAGAAYAzwEAAKwEAAAAAA=="
+
+write_fallback() {
+    echo "    Writing embedded minimal OTT fallback..."
+    echo "${FALLBACK_B64}" | tr -d ' \n' | base64 -d > "${TEMPLATE_FILE}"
+    echo "    Fallback OTT written ($(wc -c < "${TEMPLATE_FILE}") bytes)"
+}
+
+mkdir -p "${TEMPLATE_DIR}"
+
+echo "==> [1/3] Downloading MSE exam template from SWITCHdrive..."
+
+ATTEMPT=0
+SUCCESS=0
+
+while [ ${ATTEMPT} -lt ${MAX_RETRIES} ]; do
+    ATTEMPT=$((ATTEMPT + 1))
+    echo "    Attempt ${ATTEMPT}/${MAX_RETRIES}..."
+
+    if curl -fsSL --connect-timeout 15 --max-time 60 \
+        "${NEXTCLOUD_URL}" -o "${TEMPLATE_FILE}.tmp" 2>/dev/null; then
+
+        # Validate: non-empty and starts with PK (ZIP/ODF magic bytes)
+        MAGIC=$(dd if="${TEMPLATE_FILE}.tmp" bs=1 count=2 2>/dev/null \
+                | od -A n -t x1 | tr -d ' \n')
+        if [ -s "${TEMPLATE_FILE}.tmp" ] && [ "${MAGIC}" = "504b" ]; then
+            mv "${TEMPLATE_FILE}.tmp" "${TEMPLATE_FILE}"
+            SUCCESS=1
+            echo "    Downloaded and validated ($(wc -c < "${TEMPLATE_FILE}") bytes)"
+            break
+        else
+            echo "    WARNING: Invalid or empty download (magic=${MAGIC})"
+            rm -f "${TEMPLATE_FILE}.tmp"
+        fi
+    else
+        echo "    WARNING: curl failed on attempt ${ATTEMPT}"
+        rm -f "${TEMPLATE_FILE}.tmp"
+    fi
+
+    if [ ${ATTEMPT} -lt ${MAX_RETRIES} ]; then
+        echo "    Retrying in ${RETRY_DELAY} seconds..."
+        sleep ${RETRY_DELAY}
+    fi
+done
+
+if [ ${SUCCESS} -eq 0 ]; then
+    echo ""
+    echo "============================================================"
+    echo "WARNING: Download failed after ${MAX_RETRIES} attempts."
+    echo "  URL: ${NEXTCLOUD_URL}"
+    echo "  Embedding minimal OTT as safe net."
+    echo "  ${FETCH_SCRIPT} will retry at every student login."
+    echo "============================================================"
+    echo ""
+    write_fallback
+fi
+
+rm -f "${TEMPLATE_FILE}.tmp"
+
+# =============================================================================
+# PART 2: Install fetch-template.sh (refreshes template at every login)
+# =============================================================================
+
+echo "==> [2/3] Installing ${FETCH_SCRIPT}..."
+
+mkdir -p "$(dirname ${FETCH_SCRIPT})"
+
+cat > "${FETCH_SCRIPT}" << EOF
+#!/bin/sh
+# fetch-template.sh
+# Installed by: mse_download_template.hook.chroot
+# Runs at every login via XDG autostart.
+# Downloads the current MSE exam template from SWITCHdrive to the Desktop.
+# Falls back to the bundled template if the download fails.
+#
+# --- Properties (inherited from build-time hook configuration) ---
+LIVE_USER="${LIVE_USER}"
+DESKTOP="/home/\${LIVE_USER}/Desktop"
+TARGET="\${DESKTOP}/${TEMPLATE_DEST_NAME}"
+TEMPLATE_LOCAL="${TEMPLATE_FILE}"
+NEXTCLOUD_URL="${NEXTCLOUD_URL}"
+NM_ONLINE_TIMEOUT="${NM_ONLINE_TIMEOUT}"
+
+# Ensure Desktop exists
+mkdir -p "\${DESKTOP}"
+
+# Wait for network
+if command -v nm-online >/dev/null 2>&1; then
+    nm-online -q --timeout=\${NM_ONLINE_TIMEOUT}
+fi
+
+# Download
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "\${NEXTCLOUD_URL}" -o "\${TARGET}"
+    STATUS=\$?
+elif command -v wget >/dev/null 2>&1; then
+    wget -q "\${NEXTCLOUD_URL}" -O "\${TARGET}"
+    STATUS=\$?
+else
+    STATUS=1
+fi
+
+# Fallback if download failed or file is empty
+if [ "\${STATUS}" -ne 0 ] || [ ! -s "\${TARGET}" ]; then
+    cp "\${TEMPLATE_LOCAL}" "\${TARGET}"
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send \
+            --urgency=normal \
+            --icon=dialog-warning \
+            "MSE Template" \
+            "Using local fallback template (SWITCHdrive unavailable)"
+    fi
+else
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send \
+            --urgency=low \
+            --icon=document-new \
+            "MSE Template" \
+            "Exam template downloaded from SWITCHdrive"
+    fi
+fi
+
+# Fix ownership
+chown "\${LIVE_USER}:\${LIVE_USER}" "\${TARGET}"
+EOF
+
+chmod +x "${FETCH_SCRIPT}"
+echo "    Installed."
+
+# =============================================================================
+# PART 3: Install XDG autostart entry
+# =============================================================================
+
+echo "==> [3/3] Installing XDG autostart entry..."
+
+mkdir -p "$(dirname ${AUTOSTART_ENTRY})"
+
+cat > "${AUTOSTART_ENTRY}" << EOF
+[Desktop Entry]
+Type=Application
+Name=Fetch MSE Template
+Comment=Downloads the MSE exam template from SWITCHdrive at login
+Exec=${FETCH_SCRIPT}
+X-GNOME-Autostart-enabled=true
+EOF
+
+echo "    Installed: ${AUTOSTART_ENTRY}"
+echo "==> MSE template setup complete."
