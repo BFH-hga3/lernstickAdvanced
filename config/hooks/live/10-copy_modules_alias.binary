@@ -1,0 +1,5 @@
+#!/bin/bash
+# 10-copy_modules_alias.binary
+# Copies modules.alias from the chroot into isolinux/ for hardware detection.
+
+cp ../chroot/lib/modules/*/modules.alias isolinux/

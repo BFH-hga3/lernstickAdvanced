@@ -1,0 +1,12 @@
+#!/bin/sh
+# 75-disable_services.chroot
+# Disables services that cause problems in the live/exam environment.
+
+# nmbd causes a boot timeout in Debian 13 — disable if present.
+# https://bugs-devel.debian.org/cgi-bin/bugreport.cgi?bug=1090974
+if systemctl list-unit-files nmbd.service > /dev/null 2>&1; then
+    systemctl disable nmbd
+    echo "Disabled nmbd.service."
+else
+    echo "INFO: nmbd.service not installed, skipping."
+fi

@@ -1,0 +1,10 @@
+#!/bin/sh
+# 70-enable_memlockd.chroot
+# Enables memlockd which is needed for the vanished-root handler.
+# The memlockd maintainer chose not to enable it by default.
+
+if systemctl list-unit-files memlockd.service > /dev/null 2>&1; then
+    systemctl enable memlockd
+else
+    echo "INFO: memlockd.service not found, skipping."
+fi

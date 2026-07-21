@@ -1,16 +1,18 @@
 #!/bin/sh
+# 50-grub_cleanup.binary
+# Removes default live-build GRUB assets and installs the Lernstick-customized
+# EFI binaries. Must run BEFORE 60-mse_branding.binary which patches grub.cfg.
 
-# remove all grub files of live build
-# we have our own customized grub version, so we just don't need the other files
+# Remove default live-build GRUB theme files
 rm -rf boot/grub/dejavu-bold-14.pf2
 rm -rf boot/grub/dejavu-bold-16.pf2
 rm -rf boot/grub/live-theme/
 rm -rf boot/grub/loopback.cfg
 rm -rf boot/grub/splash.png
 
-# use our customized version
+# Install Lernstick-customized EFI binaries
 cp EFI/boot/bootx64.efi.lernstick EFI/boot/bootx64.efi
 cp EFI/boot/grubx64.efi.lernstick EFI/boot/grubx64.efi
 
-# use our customized efi.img with the old shim (used for hybrid ISOs)
+# Install customized EFI image for hybrid ISOs (old shim)
 mv boot/grub/efi.img.lernstick boot/grub/efi.img

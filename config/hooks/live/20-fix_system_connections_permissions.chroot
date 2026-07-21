@@ -1,0 +1,6 @@
+#!/bin/sh
+# 20-fix_system_connections_permissions.chroot
+# NetworkManager system connection files must have mode -rw-------.
+# Git does not preserve permissions, so we enforce them here.
+
+find /etc/NetworkManager/system-connections/ -type f -exec chmod 600 {} \;

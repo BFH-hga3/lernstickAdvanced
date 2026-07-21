@@ -1,0 +1,13 @@
+#!/bin/sh
+# 95-fix_permissions.chroot
+# Enforces correct file permissions that git does not preserve.
+# Must run AFTER 88-mse_setup_users which creates /etc/sudoers.d/mse-exam.
+
+# /etc/sudoers.d/ files must be -r--r----- (440)
+find /etc/sudoers.d/ -type f -exec chmod 440 {} \;
+
+# /etc/polkit-1/localauthority/ must be owned root:polkitd, mode 750
+if [ -d /etc/polkit-1/localauthority/ ]; then
+    chown root:polkitd /etc/polkit-1/localauthority
+    chmod 750 /etc/polkit-1/localauthority
+fi

@@ -1,0 +1,14 @@
+#!/bin/sh
+# 25-lernstick_doc_timestamp.chroot
+# Stamps the Lernstick HTML documentation with the current build date.
+
+echo "executing timestamp hook"
+
+if [ -f /usr/local/lernstick.html ] && [ -f /usr/local/lernstick_de.html ]; then
+    _DATE="$(date -I)"
+    echo "setting timestamp \"${_DATE}\""
+    sed -i -e "s|@DATE@|${_DATE}|" /usr/local/lernstick.html
+    sed -i -e "s|@DATE@|${_DATE}|" /usr/local/lernstick_de.html
+else
+    echo "INFO: lernstick html files not found, skipping timestamp."
+fi

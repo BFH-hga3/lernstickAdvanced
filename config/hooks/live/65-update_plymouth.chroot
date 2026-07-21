@@ -1,0 +1,9 @@
+#!/bin/sh
+# 65-update_plymouth.chroot
+# Sets the Lernstick Plymouth boot theme. Must run after plymouth is installed.
+
+if command -v plymouth-set-default-theme > /dev/null; then
+    plymouth-set-default-theme -R homeworld-lernstick
+else
+    echo "INFO: plymouth-set-default-theme not found, skipping."
+fi

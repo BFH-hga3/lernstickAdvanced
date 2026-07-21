@@ -1,4 +1,6 @@
 #!/bin/sh
+# 88-mse_setup_users.chroot
+# Must run before 99-uninstall_packages (uses whois/mkpasswd).
 # setup_users.hook.chroot
 #
 # Uses live-config's own debconf/user-setup infrastructure to configure users:

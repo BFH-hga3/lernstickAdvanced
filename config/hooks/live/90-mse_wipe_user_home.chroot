@@ -1,4 +1,5 @@
 #!/bin/sh
+# 90-mse_wipe_user_home.chroot
 # wipe_user_home.hook.chroot
 #
 # Installs two complementary wipe mechanisms:

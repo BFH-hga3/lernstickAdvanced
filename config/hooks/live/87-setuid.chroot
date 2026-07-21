@@ -1,0 +1,14 @@
+#!/bin/sh
+# 87-setuid.chroot
+# Sets the setuid bit on programs that need superuser capabilities but whose
+# filesystems (aufs) do not support extended attributes / POSIX capabilities.
+# Must run after all packages are installed.
+
+PROGRAMS="/usr/bin/dumpcap /bin/ping"
+
+for PROG in ${PROGRAMS}; do
+    if [ -e "${PROG}" ]; then
+        chmod u+s "${PROG}"
+        echo "setuid applied: ${PROG}"
+    fi
+done

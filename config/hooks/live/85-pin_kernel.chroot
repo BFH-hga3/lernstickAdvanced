@@ -1,4 +1,8 @@
 #!/bin/sh
+# 85-pin_kernel.chroot
+# Pins installed kernel and driver packages to their exact versions to
+# prevent accidental upgrades that could break module compatibility.
+# Must run after packages are installed, before cleanup.
 
 PIN_FILE="/etc/apt/preferences.d/kernel_pin"
 

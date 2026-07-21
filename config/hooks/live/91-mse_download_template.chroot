@@ -1,4 +1,6 @@
 #!/bin/sh
+# 91-mse_download_template.chroot
+# Must run before 99-uninstall_packages (uses curl).
 # mse_download_template.hook.chroot
 #
 # Consolidates all MSE LibreOffice template setup in one hook:

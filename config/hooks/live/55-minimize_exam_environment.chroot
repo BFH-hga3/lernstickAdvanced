@@ -1,0 +1,19 @@
+#!/bin/sh
+# 55-minimize_exam_environment.chroot
+# Further minimises the exam environment by removing optional GNOME packages.
+# Currently disabled — remove the exit 0 to enable for minimal exam builds.
+
+exit 0
+
+apt purge -y \
+    baobab \
+    firefox-esr \
+    gnome-calculator \
+    gnome-characters \
+    gnome-clocks \
+    gnome-disk-utility \
+    gnome-font-viewer \
+    gnome-logs \
+    gnome-software \
+    gnome-system-monitor \
+    gnome-tweaks

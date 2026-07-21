@@ -1,0 +1,8 @@
+#!/bin/bash
+# 20-fix_syslinux.binary
+# Removes dangling vmlinuz/initrd symlinks from the live/ directory that
+# live-build sometimes leaves behind.
+
+cd live || exit 1
+rm -f vmlinuz-* || true
+rm -f initrd.img-* || true

@@ -1,0 +1,9 @@
+#!/bin/sh
+# 82-remove_vboxnetflt.chroot
+# Removes the VirtualBox bridged networking driver (vboxnetflt) from the
+# live exam environment. Without this, students could bypass the lernstick
+# firewall by switching a VM to bridged networking mode.
+# Blacklisting alone does not reliably prevent module loading.
+# Must run after VirtualBox packages are installed (80-virtualbox_guest).
+
+find /lib/modules -name vboxnetflt.ko -delete

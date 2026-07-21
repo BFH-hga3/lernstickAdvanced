@@ -1,0 +1,5 @@
+#!/bin/sh
+# 10-remove_files.chroot
+# Removes stale apt config files left over from package installation.
+
+rm -f /etc/apt/apt.conf.d/20auto-upgrades.ucf-dist

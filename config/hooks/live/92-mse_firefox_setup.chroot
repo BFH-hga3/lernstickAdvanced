@@ -1,4 +1,5 @@
 #!/bin/sh
+# 92-mse_firefox_setup.chroot
 # firefox_setup.hook.chroot
 #
 # Consolidates all Firefox configuration for the exam environment:
@@ -307,6 +308,8 @@ cat >> "${DCONF_LOCKS_DIR}/mse-wallpaper-locks" << EOF
 EOF
 
 # Recompile dconf database
-dconf update 2>/dev/null || true
+# dconf update is deferred to boot via live-config hook 0500-mse-dconf
+# (installed by 93-mse_branding.chroot). Calling dconf update here would
+# be overridden by live-config at first boot anyway.
 echo "    GNOME dock configured: ${DCONF_DOCK_FILE}"
 echo "==> Firefox setup complete."

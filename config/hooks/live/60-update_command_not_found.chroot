@@ -1,0 +1,10 @@
+#!/bin/sh
+# 60-update_command_not_found.chroot
+# Builds the command-not-found package list. Must run after all packages
+# are installed so the list is complete.
+
+if command -v update-command-not-found > /dev/null; then
+    update-command-not-found
+else
+    echo "INFO: update-command-not-found not found, skipping."
+fi

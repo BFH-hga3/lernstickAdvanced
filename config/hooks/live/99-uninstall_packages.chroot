@@ -1,0 +1,106 @@
+#!/bin/sh
+# 99-uninstall_packages.chroot
+#
+# MUST RUN LAST — high numeric prefix enforces this.
+#
+# Removes packages that were needed during the build by other hooks but are
+# not wanted in the final live image, and purges unwanted recommends.
+#
+# Depends on (must run after):
+#   88-mse_setup_users   (uses whois/mkpasswd)
+#   91-mse_download_template (uses curl)
+#   93-mse_branding      (uses imagemagick, librsvg2-bin, curl)
+
+set -e
+
+# =============================================================================
+# Packages pulled in as recommends — not wanted in exam environment
+# =============================================================================
+
+# Note: DON'T purge xscreensaver — without it screensavers in MATE/LXDE/XFCE
+# crash (observed in Debian 9; kept as precaution).
+
+echo "==> [1/6] Purging unwanted recommends..."
+
+apt-get purge -y \
+    firmware-marvell-prestera \
+    gnome-contacts \
+    gnome-maps \
+    gnome-weather \
+    hunspell-de-de \
+    hunspell-es \
+    hunspell-fr-classical \
+    hunspell-pt-br \
+    hunspell-ru \
+    malcontent-gui \
+    myspell-fa \
+    myspell-sq \
+    sane-utils \
+    totem \
+    totem-plugins \
+    xserver-xorg-video-intel \
+    zutty
+
+# NOTE: hunspell-fr, hunspell-it, hunspell-en-us and hunspell-en-gb are
+# intentionally kept — needed for LibreOffice spellcheck in the exam
+# environment (de_CH, fr_CH, it_CH, en_GB, en_US locales).
+
+# =============================================================================
+# AppArmor — prevents evince from starting
+# =============================================================================
+
+echo "==> [2/6] Purging apparmor..."
+
+apt-get purge -y apparmor
+
+# =============================================================================
+# DHCP client — isc-dhcp-client has a known bug (Debian 9); may not be
+# present in Trixie — use || true to avoid failure if not installed
+# =============================================================================
+
+echo "==> [3/6] Purging isc-dhcp-client..."
+
+apt-get purge -y \
+    isc-dhcp-client \
+    isc-dhcp-common || true
+
+# =============================================================================
+# Bluetooth — disabled in exam environment to prevent data exchange
+# =============================================================================
+
+echo "==> [4/6] Purging bluetooth packages..."
+
+apt-get purge -y \
+    bluez \
+    bluez-obexd \
+    gnome-bluetooth \
+    pulseaudio-module-bluetooth
+
+# =============================================================================
+# GNOME Software — triggers password prompt at startup in exam environment
+# =============================================================================
+
+echo "==> [5/6] Purging gnome-software..."
+
+apt-get purge -y gnome-software
+
+# =============================================================================
+# Build-time tools — used by hooks, not needed in the live image
+#   whois      → 88-mse_setup_users (mkpasswd for yescrypt hashing)
+#   imagemagick, librsvg2-bin → 93-mse_branding (logo/wallpaper generation)
+# =============================================================================
+
+echo "==> [6/6] Purging build-time tools..."
+
+apt-get purge -y whois
+apt-get purge -y imagemagick librsvg2-bin
+
+# =============================================================================
+# Final cleanup
+# =============================================================================
+
+apt-get autoremove -y --purge
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+
+echo "==> Uninstall complete."

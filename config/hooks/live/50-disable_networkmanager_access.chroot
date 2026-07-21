@@ -1,0 +1,15 @@
+#!/bin/sh
+# 50-disable_networkmanager_access.chroot
+# Restricts the live user from modifying system-wide NetworkManager connections
+# via polkit. Currently disabled — remove the exit 0 to enable.
+
+exit 0
+
+cat > /etc/polkit-1/localauthority/50-local.d/51-disable-networkmanager-system-access.pkla << 'PKLA'
+[WLAN]
+Identity=unix-user:user
+Action=org.freedesktop.NetworkManager.settings.modify.system
+ResultAny=no
+ResultInactive=no
+ResultActive=no
+PKLA

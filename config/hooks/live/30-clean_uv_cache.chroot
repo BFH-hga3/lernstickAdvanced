@@ -1,0 +1,10 @@
+#!/bin/sh
+# 30-clean_uv_cache.chroot
+# Cleans the uv (Python package manager) cache if uv is installed.
+# uv caches can be very large and are not needed in the live image.
+
+if [ -e /usr/local/bin/uv ]; then
+    /usr/local/bin/uv cache clean
+else
+    echo "INFO: uv not installed, skipping cache clean."
+fi

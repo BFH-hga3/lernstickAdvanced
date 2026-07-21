@@ -1,0 +1,17 @@
+#!/bin/sh
+# 40-enable_cryptsetup.chroot
+# Enables cryptsetup in initramfs for encrypted persistence partitions.
+# Currently disabled — uncomment body if encrypted persistence is needed.
+#
+# Reference: https://bugs.debian.org/908220
+
+exit 0
+
+# if [ -e /etc/cryptsetup-initramfs/conf-hook ]; then
+#     if grep -q '^#CRYPTSETUP=' /etc/cryptsetup-initramfs/conf-hook; then
+#         sed -i -e 's/^#CRYPTSETUP=.*/CRYPTSETUP=y/' /etc/cryptsetup-initramfs/conf-hook
+#     else
+#         echo "CRYPTSETUP=y" >> /etc/cryptsetup-initramfs/conf-hook
+#     fi
+# fi
+# update-initramfs -u
