@@ -85,6 +85,33 @@ build_image()
 	sed -i "s|title-text.*|title-text: \"Lernstick-Prüfungsumgebung Debian 13 (Version ${TODAY})\"|1" \
 		${GRUB_THEME_DIR}/theme.txt
 
+	# Generate password hashes on the host BEFORE entering the chroot.
+	# chroot hooks cannot access host environment variables, so we
+	# pre-generate yescrypt hashes here and place them in
+	# includes.chroot_before_packages where the chroot hook can read them.
+	# Requires: whois (mkpasswd) installed on the BUILD HOST.
+	echo "Generating MSE password hashes on host..."
+	if [ -z "${MSE_USER_PASSWORD}" ] || [ -z "${MSE_ADMIN_PASSWORD}" ]; then
+		echo "ERROR: MSE_USER_PASSWORD and/or MSE_ADMIN_PASSWORD not set in constants."
+		echo "       Set both variables in your constants file before building."
+		exit 1
+	fi
+	if [ ${#MSE_USER_PASSWORD} -lt 4 ] || [ ${#MSE_ADMIN_PASSWORD} -lt 4 ]; then
+		echo "ERROR: Passwords must be at least 4 characters."
+		exit 1
+	fi
+	if ! command -v mkpasswd >/dev/null 2>&1; then
+		echo "ERROR: mkpasswd not found on build host. Run: apt install whois"
+		exit 1
+	fi
+	MSE_HASH_DIR="config/includes.chroot_before_packages/etc/mse"
+	mkdir -p "${MSE_HASH_DIR}"
+	mkpasswd --method=yescrypt "${MSE_USER_PASSWORD}" > "${MSE_HASH_DIR}/user.hash"
+	mkpasswd --method=yescrypt "${MSE_ADMIN_PASSWORD}" > "${MSE_HASH_DIR}/admin.hash"
+	chmod 600 "${MSE_HASH_DIR}/user.hash" "${MSE_HASH_DIR}/admin.hash"
+	echo "    Hash written: ${MSE_HASH_DIR}/user.hash"
+	echo "    Hash written: ${MSE_HASH_DIR}/admin.hash"
+
 	# update configuration
 	rm -f config/binary
 	rm -f config/bootstrap

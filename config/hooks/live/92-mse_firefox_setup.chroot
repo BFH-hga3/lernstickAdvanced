@@ -288,6 +288,24 @@ mkdir -p "$(dirname ${LAUNCHER_SKEL_LINK})"
 ln -sf "${LAUNCHER}" "${LAUNCHER_SKEL_LINK}"
 echo "    Desktop symlink: ${LAUNCHER_SKEL_LINK} -> ${LAUNCHER}"
 
+# Mark the desktop launcher as trusted so GNOME shows it as an
+# executable application rather than an untrusted file.
+# GNOME checks for the user.trusted extended attribute on .desktop
+# files placed on the Desktop outside /usr/share/applications/.
+# The symlink must be marked, not the target in /usr/share/applications/.
+# attr/setfattr is used since includes.chroot_after_packages does not
+# preserve extended attributes.
+if command -v attr >/dev/null 2>&1; then
+    attr -s trusted -V "" "${LAUNCHER_SKEL_LINK}" 2>/dev/null || true
+    echo "    Trusted xattr set on: ${LAUNCHER_SKEL_LINK}"
+elif command -v setfattr >/dev/null 2>&1; then
+    setfattr -n user.trusted -v "" "${LAUNCHER_SKEL_LINK}" 2>/dev/null || true
+    echo "    Trusted xattr set on: ${LAUNCHER_SKEL_LINK}"
+else
+    echo "    WARNING: attr/setfattr not found — desktop launcher may show"
+    echo "             as untrusted in GNOME. Add 'attr' to package lists."
+fi
+
 # --- GNOME dock: replace Firefox with our MSE launcher ---
 # Sets dash-to-dock favorites via dconf system defaults.
 # Removes org.gnome.Nautilus, org.gnome.Calendar etc. — keep only what
@@ -309,4 +327,51 @@ EOF
 # (installed by 93-mse_branding.chroot). Calling dconf update here would
 # be overridden by live-config at first boot anyway.
 echo "    GNOME dock configured: ${DCONF_DOCK_FILE}"
+
+# =============================================================================
+# Install live-config boot hook to mark desktop launcher as trusted
+# =============================================================================
+# GNOME requires .desktop files on the Desktop to carry a user.trusted
+# extended attribute to be launchable without a "Mark as Executable" dialog.
+# xattrs are not preserved through skel copy at login, so we set them via
+# a live-config hook that runs after the user home is created.
+
+mkdir -p /lib/live/config
+
+cat > /lib/live/config/0600-mse-trust-launcher << 'EOF'
+#!/bin/sh
+# 0600-mse-trust-launcher — live-config hook
+# Sets the user.trusted xattr on the MSE exam browser desktop launcher
+# so GNOME treats it as a trusted executable application.
+# Runs after 0030-user-setup has created the live user home directory.
+
+STAMP="/var/lib/live/config/0600-mse-trust-launcher"
+[ -e "${STAMP}" ] && exit 0
+
+LAUNCHER="/home/user/Desktop/mse-exam-browser.desktop"
+
+# Wait for the desktop file to exist (home is populated from skel)
+RETRIES=10
+while [ ${RETRIES} -gt 0 ] && [ ! -e "${LAUNCHER}" ]; do
+    sleep 1
+    RETRIES=$((RETRIES - 1))
+done
+
+if [ -e "${LAUNCHER}" ]; then
+    if command -v attr >/dev/null 2>&1; then
+        attr -s trusted -V "" "${LAUNCHER}" 2>/dev/null || true
+    elif command -v setfattr >/dev/null 2>&1; then
+        setfattr -n user.trusted -v "" "${LAUNCHER}" 2>/dev/null || true
+    fi
+    echo "MSE: desktop launcher marked as trusted."
+else
+    echo "MSE: WARNING — launcher not found at ${LAUNCHER}"
+fi
+
+mkdir -p /var/lib/live/config
+touch "${STAMP}"
+EOF
+
+chmod 755 /lib/live/config/0600-mse-trust-launcher
+echo "    live-config trust hook installed: /lib/live/config/0600-mse-trust-launcher"
 echo "==> Firefox setup complete."

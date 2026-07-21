@@ -1,2 +1,4 @@
-# Required by setup_users.hook.chroot for yescrypt password hashing
-whois
+# Build-time tools for 88-mse_setup_users.chroot
+# NOTE: whois (mkpasswd) is no longer needed in the chroot.
+# Password hashing now happens on the BUILD HOST in functions.sh.
+# Ensure whois is installed on your build host: apt install whois

@@ -3,3 +3,6 @@ config/includes.binary/boot/grub/themes/lernstick/theme.txt
 config/packages.chroot/
 constants
 cache
+
+# Password hash files generated at build time — never commit
+config/includes.chroot_before_packages/etc/mse/

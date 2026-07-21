@@ -96,7 +96,9 @@ echo "==> [6/6] Purging build-time tools..."
 # It is needed at runtime by /usr/local/bin/fetch-template.sh
 # which downloads the MSE exam template at every student login.
 
-apt-get purge -y whois
+# NOTE: whois is no longer installed in the chroot — mkpasswd now
+# runs on the build host in functions.sh. Nothing to purge here.
+
 apt-get purge -y imagemagick librsvg2-bin
 
 # =============================================================================

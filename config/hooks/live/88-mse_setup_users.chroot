@@ -1,7 +1,5 @@
 #!/bin/sh
 # 88-mse_setup_users.chroot
-# Must run before 99-uninstall_packages (uses whois/mkpasswd).
-# setup_users.hook.chroot
 #
 # Uses live-config's own debconf/user-setup infrastructure to configure users:
 #
@@ -10,13 +8,15 @@
 #     0030-user-setup does internally with its default password.
 #
 #   - Runs a live-config hook at 1000 (after 0030) to create "sysadmin" and
-#     set its password via the same debconf mechanism (user-setup-apply).
+#     set its password via usermod with the pre-hashed password.
 #
 #   - Disables 0040-sudo and installs a clean sudoers policy.
 #
-# Passwords are read from MSE_USER_PASSWORD / MSE_ADMIN_PASSWORD env vars
-# (set in constants, gitignored). Falls back to defaults if unset or empty.
-# Hashed at build time with yescrypt — no cleartext in the final image.
+# Passwords are hashed on the BUILD HOST in functions.sh build_image() before
+# lb build runs. The hashes are placed in /etc/mse/ via
+# includes.chroot_before_packages and read here. This avoids the problem of
+# chroot hooks not having access to host environment variables.
+# Cleartext passwords never enter the chroot — only yescrypt hashes.
 
 set -e
 
@@ -29,35 +29,15 @@ ADMIN_USER="sysadmin"
 ADMIN_USER_GECOS="System Administrator"
 ADMIN_USER_SHELL="/bin/bash"
 
-# Passwords from environment (set in constants, gitignored).
-# In constants: export MSE_USER_PASSWORD="secret"
-#               export MSE_ADMIN_PASSWORD="secret"
-# Fail loudly if not set — never silently use weak defaults in production.
-if [ -z "${MSE_USER_PASSWORD}" ]; then
-    echo "ERROR: MSE_USER_PASSWORD not set in constants."
-    echo "       Set 'export MSE_USER_PASSWORD=...' in your constants file."
-    exit 1
-fi
-if [ -z "${MSE_ADMIN_PASSWORD}" ]; then
-    echo "ERROR: MSE_ADMIN_PASSWORD not set in constants."
-    echo "       Set 'export MSE_ADMIN_PASSWORD=...' in your constants file."
-    exit 1
-fi
-if [ ${#MSE_USER_PASSWORD} -lt 4 ]; then
-    echo "ERROR: MSE_USER_PASSWORD is too short (minimum 8 characters)."
-    exit 1
-fi
-if [ ${#MSE_ADMIN_PASSWORD} -lt 8 ]; then
-    echo "ERROR: MSE_ADMIN_PASSWORD is too short (minimum 8 characters)."
-    exit 1
-fi
-LIVE_USER_PASSWORD="${MSE_USER_PASSWORD}"
-ADMIN_USER_PASSWORD="${MSE_ADMIN_PASSWORD}"
-
 LIVE_CONFIG_DIR="/lib/live/config"
 SUDOERS_FILE="/etc/sudoers.d/mse-exam"
 LIVE_CONF_DIR="/etc/live/config.conf.d"
 LIVE_CONF_FILE="${LIVE_CONF_DIR}/mse-exam.conf"
+
+# Hash files written by functions.sh on the host before lb build
+HASH_DIR="/etc/mse"
+LIVE_USER_HASH_FILE="${HASH_DIR}/user.hash"
+ADMIN_USER_HASH_FILE="${HASH_DIR}/admin.hash"
 
 # =============================================================================
 # DERIVED PATHS — do not edit
@@ -67,24 +47,33 @@ PRE_HOOK="${LIVE_CONFIG_DIR}/0020-mse-user-password"
 POST_HOOK="${LIVE_CONFIG_DIR}/1000-mse-adduser"
 
 # =============================================================================
-# PART 1: Hash passwords at build time
+# PART 1: Read pre-generated password hashes
+# Hashes were generated on the host by functions.sh build_image() and placed
+# in /etc/mse/ via includes.chroot_before_packages before lb build ran.
 # =============================================================================
 
-echo "==> [1/4] Hashing passwords at build time (yescrypt)..."
+echo "==> [1/4] Reading pre-generated password hashes..."
 
-if ! command -v mkpasswd >/dev/null 2>&1; then
-    echo "ERROR: mkpasswd not found. Add 'whois' to your package lists."
+if [ ! -f "${LIVE_USER_HASH_FILE}" ] || [ ! -f "${ADMIN_USER_HASH_FILE}" ]; then
+    echo "ERROR: Password hash files not found in ${HASH_DIR}."
+    echo "       Ensure MSE_USER_PASSWORD and MSE_ADMIN_PASSWORD are set in"
+    echo "       constants and that functions.sh generated the hashes before"
+    echo "       lb build ran. Hash files should be at:"
+    echo "         config/includes.chroot_before_packages/etc/mse/user.hash"
+    echo "         config/includes.chroot_before_packages/etc/mse/admin.hash"
     exit 1
 fi
 
-echo "    '${LIVE_USER}': password from MSE_USER_PASSWORD."
-echo "    '${ADMIN_USER}': password from MSE_ADMIN_PASSWORD."
+LIVE_USER_HASH=$(cat "${LIVE_USER_HASH_FILE}")
+ADMIN_USER_HASH=$(cat "${ADMIN_USER_HASH_FILE}")
 
-LIVE_USER_HASH=$(mkpasswd --method=yescrypt "${LIVE_USER_PASSWORD}")
-ADMIN_USER_HASH=$(mkpasswd --method=yescrypt "${ADMIN_USER_PASSWORD}")
+if [ -z "${LIVE_USER_HASH}" ] || [ -z "${ADMIN_USER_HASH}" ]; then
+    echo "ERROR: Hash files exist but are empty. Re-run the build."
+    exit 1
+fi
 
-echo "    Hashed '${LIVE_USER}'."
-echo "    Hashed '${ADMIN_USER}'."
+echo "    Hash read for '${LIVE_USER}'."
+echo "    Hash read for '${ADMIN_USER}'."
 
 # =============================================================================
 # PART 2: Install 0020-mse-user-password
@@ -134,8 +123,7 @@ echo "    Installed: ${PRE_HOOK}"
 # =============================================================================
 # PART 3: Install 1000-mse-adduser
 # Runs AFTER 0030-user-setup. Creates sysadmin and sets its password
-# directly via usermod (no debconfig equivalent for extra users).
-# Also cleans up any sudo artefacts from 0040-sudo if it slipped through.
+# directly via usermod. Also cleans up sudo artefacts from 0040-sudo.
 # =============================================================================
 
 echo "==> [3/4] Installing post-hook ${POST_HOOK}..."
@@ -205,7 +193,7 @@ mkdir -p /etc/sudoers.d
 
 cat > "${SUDOERS_FILE}" << EOF
 # MSE Exam sudoers policy
-# Generated by: setup_users.hook.chroot
+# Generated by: 88-mse_setup_users.chroot
 
 # sysadmin: full sudo with password
 ${ADMIN_USER} ALL=(ALL) PASSWD: ALL
@@ -229,4 +217,14 @@ LIVE_CONFIG_NOCOMPONENTS="sudo"
 EOF
 
 echo "    0040-sudo disabled via: ${LIVE_CONF_FILE}"
+
+# =============================================================================
+# CLEANUP: Remove hash files — must not persist in the live image
+# =============================================================================
+
+echo "==> Removing password hash files from live image..."
+rm -f "${LIVE_USER_HASH_FILE}" "${ADMIN_USER_HASH_FILE}"
+rmdir "${HASH_DIR}" 2>/dev/null || true
+echo "    Hash files removed."
+
 echo "==> setup_users hook complete."
