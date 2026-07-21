@@ -1,0 +1,69 @@
+#!/bin/sh
+# 15-keyboard.chroot
+#
+# Configures keyboard layouts for the MSE exam environment.
+# Runs early — only requires keyboard-configuration and console-setup
+# to be installed, which are base system packages.
+#
+# Layouts: Swiss German (ch-de), Swiss French (ch-fr), Italian (it), US (us)
+# Toggle:  Alt+Shift cycles between layouts
+#
+# Also suppresses the spurious "Unknown X keysym dead_belowmacron" warning
+# that appears during setupcon on Debian 13 with the ch/it keyboard layout.
+# The keysym exists in the layout definition but not in the installed libx11
+# keysym table — cosmetic only, all keys work correctly.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+# XKB keyboard model
+XKBMODEL="pc105"
+
+# Layout order: ch-de, ch-fr, it, us
+# ch covers both de and fr variants via XKBVARIANT
+XKBLAYOUT="ch,ch,it,us"
+
+# Variant per layout (empty = default for that layout)
+XKBVARIANT="de,fr,,"
+
+# Option: Alt+Shift toggles between layouts
+XKBOPTIONS="grp:alt_shift_toggle"
+
+BACKSPACE="guess"
+
+# =============================================================================
+# PART 1: Write /etc/default/keyboard
+# =============================================================================
+
+echo "==> [1/2] Writing /etc/default/keyboard..."
+
+cat > /etc/default/keyboard << KEYBOARD_EOF
+XKBMODEL="${XKBMODEL}"
+XKBLAYOUT="${XKBLAYOUT}"
+XKBVARIANT="${XKBVARIANT}"
+XKBOPTIONS="${XKBOPTIONS}"
+BACKSPACE="${BACKSPACE}"
+KEYBOARD_EOF
+
+echo "    Written: /etc/default/keyboard"
+
+# =============================================================================
+# PART 2: Apply keyboard config inside chroot
+# Suppress dead_belowmacron warning — cosmetic keysym lookup failure in
+# Debian 13's libx11 for the ch/it layout definition. All keys work correctly.
+# =============================================================================
+
+echo "==> [2/2] Applying keyboard configuration..."
+
+if command -v setupcon >/dev/null 2>&1; then
+    setupcon --save --force 2>&1 | grep -v "dead_belowmacron" || true
+    echo "    setupcon completed."
+else
+    echo "    INFO: setupcon not found — keyboard will be configured at first boot."
+fi
+
+echo "==> Keyboard configuration complete."
+echo "    Layouts: ch-de, ch-fr, it, us (Alt+Shift to cycle)"

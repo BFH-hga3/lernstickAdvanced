@@ -3,11 +3,17 @@
 # Restricts the live user from modifying system-wide NetworkManager connections
 # via polkit. 
 
-cat > /etc/polkit-1/localauthority/50-local.d/51-disable-networkmanager-system-access.pkla << 'PKLA'
+PKLA_DIR=/etc/polkit-1/localauthority/50-local.d/
+PKLA_FILE=${PKLA_DIR}/51-disable-networkmanager-system-access.pkla
+
+mkdir -p ${PKLA_DIR}
+cat > ${PKLA_DILE} << 'EOF'
 [WLAN]
 Identity=unix-user:user
 Action=org.freedesktop.NetworkManager.settings.modify.system
 ResultAny=no
 ResultInactive=no
 ResultActive=no
-PKLA
+EOF
+
+exit 0
