@@ -2,22 +2,28 @@
 
 PIN_FILE="/etc/apt/preferences.d/kernel_pin"
 
+# Ensure the pin file exists before any grep/sed operations
+touch "$PIN_FILE"
+
 pin_package()
 {
 	PACKAGE=$1
-	VERSION=$(dpkg -s "$PACKAGE" | grep "Version:" | awk '{ print $2 }')
+	# Strip multiarch suffix (:amd64, :i386) — APT preferences do not
+	# support architecture qualifiers in Package: fields
+	PKG_NOARCH=$(echo "$PACKAGE" | cut -d: -f1)
+	VERSION=$(dpkg -s "$PACKAGE" 2>/dev/null | grep "Version:" | awk '{ print $2 }')
 	if [ -n "$VERSION" ]
 	then
-		if grep -q "Package: $PACKAGE" $PIN_FILE
+		if grep -q "Package: $PKG_NOARCH" $PIN_FILE
 		then
 			# the package record is already there (because of a backports definition or similar)
 			# just set the pin value to the current package version
-			sed -i "/Package: ${PACKAGE}/{N;s/Package: ${PACKAGE}\nPin: .*/Package: ${PACKAGE}\nPin: version ${VERSION}/g}" $PIN_FILE
+			sed -i "/Package: ${PKG_NOARCH}/{N;s/Package: ${PKG_NOARCH}\nPin: .*/Package: ${PKG_NOARCH}\nPin: version ${VERSION}/g}" $PIN_FILE
 		else
 			# the package record is still missing
 			# append a new package record
 			echo "
-Package: $PACKAGE
+Package: $PKG_NOARCH
 Pin: version $VERSION
 Pin-Priority: 999" >> $PIN_FILE
 		fi
