@@ -1,0 +1,149 @@
+#!/bin/sh
+# setup_users.hook.chroot
+#
+# Runs during lb build (chroot stage). Hashes passwords at build time using
+# openssl passwd, then installs a systemd service that injects the hashes
+# into the live system at boot via chpasswd -e and useradd -p.
+# Cleartext passwords never appear in the final image.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+LIVE_USER="user"
+LIVE_USER_PASSWORD="live"
+
+ADMIN_USER="sysadmin"
+ADMIN_USER_PASSWORD="letMeIn"
+ADMIN_USER_GECOS="System Administrator"
+ADMIN_USER_SHELL="/bin/bash"
+
+SERVICE_NAME="mse-setup-users"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+SETUP_SCRIPT="/usr/local/sbin/${SERVICE_NAME}.sh"
+
+# =============================================================================
+# PART 1: Hash passwords at build time
+# =============================================================================
+
+echo "==> [1/3] Hashing passwords at build time..."
+
+# SHA-512 with a random salt — openssl passwd is always available in the chroot
+LIVE_USER_HASH=$(openssl passwd -6 "${LIVE_USER_PASSWORD}")
+ADMIN_USER_HASH=$(openssl passwd -6 "${ADMIN_USER_PASSWORD}")
+
+echo "    Hash generated for '${LIVE_USER}'."
+echo "    Hash generated for '${ADMIN_USER}'."
+
+# =============================================================================
+# PART 2: Install boot-time setup script (contains hashes, not cleartext)
+# =============================================================================
+
+echo "==> [2/3] Installing boot-time user setup script..."
+
+mkdir -p "$(dirname ${SETUP_SCRIPT})"
+
+# Hashes are expanded here at build time (unquoted EOF).
+# The resulting script on disk contains only the SHA-512 hashes.
+cat > "${SETUP_SCRIPT}" << EOF
+#!/bin/sh
+# ${SERVICE_NAME}.sh
+# Runs at boot via systemd. Configures users using pre-hashed passwords.
+# Passwords were hashed at build time — no cleartext exists in this file.
+# Installed by: setup_users.hook.chroot
+
+set -e
+
+LIVE_USER="${LIVE_USER}"
+LIVE_USER_HASH="${LIVE_USER_HASH}"
+
+ADMIN_USER="${ADMIN_USER}"
+ADMIN_USER_HASH="${ADMIN_USER_HASH}"
+ADMIN_USER_GECOS="${ADMIN_USER_GECOS}"
+ADMIN_USER_SHELL="${ADMIN_USER_SHELL}"
+
+echo "MSE user setup: starting..."
+
+# --- Wait for live-config to create the live user ---
+RETRIES=10
+while [ \${RETRIES} -gt 0 ]; do
+    if id "\${LIVE_USER}" >/dev/null 2>&1; then
+        break
+    fi
+    echo "Waiting for live user '\${LIVE_USER}'... (\${RETRIES} retries left)"
+    sleep 1
+    RETRIES=\$((RETRIES - 1))
+done
+
+if ! id "\${LIVE_USER}" >/dev/null 2>&1; then
+    echo "ERROR: Live user '\${LIVE_USER}' not found after waiting. Aborting."
+    exit 1
+fi
+
+# --- Set hashed password for live user ---
+echo "\${LIVE_USER}:\${LIVE_USER_HASH}" | chpasswd -e
+echo "Password hash applied for '\${LIVE_USER}'."
+
+# --- Remove live user from sudo group (exam safety) ---
+if groups "\${LIVE_USER}" | grep -q sudo; then
+    deluser "\${LIVE_USER}" sudo 2>/dev/null || gpasswd -d "\${LIVE_USER}" sudo
+    echo "Removed '\${LIVE_USER}' from sudo group."
+else
+    echo "'\${LIVE_USER}' is not in sudo group — no change needed."
+fi
+
+# --- Create sysadmin user if not already present ---
+if ! id "\${ADMIN_USER}" >/dev/null 2>&1; then
+    useradd \\
+        --create-home \\
+        --shell "\${ADMIN_USER_SHELL}" \\
+        --comment "\${ADMIN_USER_GECOS}" \\
+        --password "\${ADMIN_USER_HASH}" \\
+        --groups sudo \\
+        "\${ADMIN_USER}"
+    echo "User '\${ADMIN_USER}' created with hashed password."
+else
+    echo "User '\${ADMIN_USER}' already exists — updating password and groups."
+    echo "\${ADMIN_USER}:\${ADMIN_USER_HASH}" | chpasswd -e
+    usermod -aG sudo "\${ADMIN_USER}"
+fi
+
+echo "Group memberships:"
+echo "  \${LIVE_USER}:  \$(groups \${LIVE_USER})"
+echo "  \${ADMIN_USER}: \$(groups \${ADMIN_USER})"
+
+echo "MSE user setup: complete."
+EOF
+
+chmod 700 "${SETUP_SCRIPT}"
+echo "    Installed: ${SETUP_SCRIPT}"
+
+# =============================================================================
+# PART 3: Install and enable the systemd service unit
+# =============================================================================
+
+echo "==> [3/3] Installing systemd service ${SERVICE_NAME}..."
+
+cat > "${SERVICE_FILE}" << EOF
+[Unit]
+Description=MSE Exam User Setup
+After=live-config.service
+Requires=live-config.service
+
+[Service]
+Type=oneshot
+ExecStart=${SETUP_SCRIPT}
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl enable "${SERVICE_NAME}.service"
+
+echo "    Service enabled: ${SERVICE_NAME}.service"
+echo "==> User setup hook complete."
