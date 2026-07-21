@@ -1,0 +1,150 @@
+#!/bin/sh
+# wipe_user_home.hook.chroot
+#
+# Installs two complementary wipe mechanisms:
+#   1. A user systemd service that wipes /home/user on logout
+#   2. A system systemd service that wipes /home/user on shutdown (fallback)
+#
+# Both restore a clean skel-based home after wiping so the next
+# session starts with a fresh desktop (template, launchers, etc.).
+#
+# All configurable properties are defined at the top.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+LIVE_USER="user"
+HOME_DIR="/home/${LIVE_USER}"
+SKEL_DIR="/etc/skel"
+
+# Systemd unit names
+USER_SERVICE_NAME="mse-wipe-home"
+SYSTEM_SERVICE_NAME="mse-wipe-home-shutdown"
+
+WIPE_SCRIPT="/usr/local/sbin/mse-wipe-home.sh"
+
+# =============================================================================
+# DERIVED PATHS — do not edit
+# =============================================================================
+
+USER_SERVICE_DIR="/etc/systemd/user"
+USER_SERVICE_FILE="${USER_SERVICE_DIR}/${USER_SERVICE_NAME}.service"
+
+SYSTEM_SERVICE_FILE="/etc/systemd/system/${SYSTEM_SERVICE_NAME}.service"
+
+# =============================================================================
+# PART 1: Install the wipe script
+# =============================================================================
+
+echo "==> [1/3] Installing wipe script..."
+
+mkdir -p "$(dirname ${WIPE_SCRIPT})"
+
+cat > "${WIPE_SCRIPT}" << EOF
+#!/bin/sh
+# mse-wipe-home.sh
+# Wipes and restores /home/${LIVE_USER} from /etc/skel.
+# Called on logout (user systemd) and shutdown (system systemd fallback).
+
+LIVE_USER="${LIVE_USER}"
+HOME_DIR="${HOME_DIR}"
+SKEL_DIR="${SKEL_DIR}"
+
+echo "MSE home wipe: starting for '\${LIVE_USER}'..."
+
+# Safety check: never wipe if user is still logged in
+# (only relevant for the shutdown service path)
+if who | grep -q "^\${LIVE_USER} "; then
+    echo "WARNING: '\${LIVE_USER}' is still logged in — skipping wipe."
+    exit 0
+fi
+
+if [ ! -d "\${HOME_DIR}" ]; then
+    echo "WARNING: Home directory '\${HOME_DIR}' not found — nothing to wipe."
+else
+    # Wipe entire home directory
+    rm -rf "\${HOME_DIR}"
+    echo "    Wiped: \${HOME_DIR}"
+fi
+
+# Restore clean home from skel
+mkdir -p "\${HOME_DIR}"
+cp -a "\${SKEL_DIR}/." "\${HOME_DIR}/"
+chown -R "\${LIVE_USER}:\${LIVE_USER}" "\${HOME_DIR}"
+chmod 700 "\${HOME_DIR}"
+
+echo "MSE home wipe: restored '\${HOME_DIR}' from '\${SKEL_DIR}'."
+EOF
+
+chmod 700 "${WIPE_SCRIPT}"
+echo "    Installed: ${WIPE_SCRIPT}"
+
+# =============================================================================
+# PART 2: User systemd service (triggers on logout)
+# =============================================================================
+
+echo "==> [2/3] Installing user logout service..."
+
+mkdir -p "${USER_SERVICE_DIR}"
+
+cat > "${USER_SERVICE_FILE}" << EOF
+[Unit]
+Description=MSE Exam Home Wipe on Logout
+# Run when the user session is stopping (after logout)
+DefaultDependencies=no
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+# ExecStop runs when the service is stopped — i.e. when the session ends
+ExecStart=/bin/true
+ExecStop=${WIPE_SCRIPT}
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+EOF
+
+# Enable for the live user via /etc/skel so it activates on first login
+SKEL_SYSTEMD_DIR="${SKEL_DIR}/.config/systemd/user"
+mkdir -p "${SKEL_SYSTEMD_DIR}/default.target.wants"
+ln -sf "/etc/systemd/user/${USER_SERVICE_NAME}.service" \
+    "${SKEL_SYSTEMD_DIR}/default.target.wants/${USER_SERVICE_NAME}.service"
+
+echo "    Installed: ${USER_SERVICE_FILE}"
+echo "    Symlinked into skel: ${SKEL_SYSTEMD_DIR}/default.target.wants/"
+
+# =============================================================================
+# PART 3: System shutdown service (fallback if logout service missed)
+# =============================================================================
+
+echo "==> [3/3] Installing system shutdown fallback service..."
+
+cat > "${SYSTEM_SERVICE_FILE}" << EOF
+[Unit]
+Description=MSE Exam Home Wipe on Shutdown (fallback)
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=${WIPE_SCRIPT}
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=halt.target reboot.target shutdown.target
+EOF
+
+systemctl enable "${SYSTEM_SERVICE_NAME}.service"
+
+echo "    Installed: ${SYSTEM_SERVICE_FILE}"
+echo "    Service enabled: ${SYSTEM_SERVICE_NAME}.service"
+echo "==> Home wipe hook complete."
