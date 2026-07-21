@@ -1,10 +1,14 @@
 #!/bin/sh
 # setup_users.hook.chroot
 #
-# Runs during lb build (chroot stage). Hashes passwords at build time using
-# mkpasswd with yescrypt (Debian 13 default), then installs a systemd service
-# that injects the hashes into the live system at boot via chpasswd -e
-# and useradd -p. Cleartext passwords never appear in the final image.
+# Uses live-config's own infrastructure to:
+#   1. Set passwords for "user" and "sysadmin" via a live-config passwd hook
+#   2. Create "sysadmin" via a live-config useradd hook
+#   3. Grant sysadmin sudo via /etc/sudoers.d/mse-exam (baked at build time)
+#   4. Disable live-config's 0040-sudo component (prevents NOPASSWD for user)
+#
+# Passwords are hashed at build time with yescrypt. No cleartext in the image.
+# No systemd service needed — everything runs inside live-config's boot sequence.
 
 set -e
 
@@ -13,28 +17,36 @@ set -e
 # =============================================================================
 
 LIVE_USER="user"
-LIVE_USER_PASSWORD="live"
+LIVE_USER_PASSWORD="viewing"
 
 ADMIN_USER="sysadmin"
-ADMIN_USER_PASSWORD="letMeIn"
+ADMIN_USER_PASSWORD="LetMeIn!"
 ADMIN_USER_GECOS="System Administrator"
 ADMIN_USER_SHELL="/bin/bash"
 
-SUDOERS_DIR="/etc/sudoers.d"
-SUDOERS_FILE="${SUDOERS_DIR}/01-mse-exam"
+# live-config hook directory
+LIVE_CONFIG_DIR="/lib/live/config"
 
-SERVICE_NAME="mse-setup-users"
-SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-SETUP_SCRIPT="/usr/local/sbin/${SERVICE_NAME}.sh"
+# Sudoers file
+SUDOERS_FILE="/etc/sudoers.d/mse-exam"
+
+# live-config component disable config
+LIVE_CONF_DIR="/etc/live/config.conf.d"
+LIVE_CONF_FILE="${LIVE_CONF_DIR}/mse-exam.conf"
 
 # =============================================================================
-# PART 1: Hash passwords at build time using yescrypt (Debian 13 default)
+# DERIVED PATHS — do not edit
 # =============================================================================
 
-echo "==> [1/3] Hashing passwords at build time (yescrypt)..."
+PASSWD_HOOK="${LIVE_CONFIG_DIR}/2000-mse-passwd"
+ADDUSER_HOOK="${LIVE_CONFIG_DIR}/1000-mse-adduser"
 
-# mkpasswd (from the 'whois' package) supports yescrypt natively.
-# The resulting hash starts with $y$ and is accepted by PAM on Debian 13.
+# =============================================================================
+# PART 1: Hash passwords at build time
+# =============================================================================
+
+echo "==> [1/4] Hashing passwords at build time (yescrypt)..."
+
 if ! command -v mkpasswd >/dev/null 2>&1; then
     echo "ERROR: mkpasswd not found. Add 'whois' to your package lists."
     exit 1
@@ -43,16 +55,123 @@ fi
 LIVE_USER_HASH=$(mkpasswd --method=yescrypt "${LIVE_USER_PASSWORD}")
 ADMIN_USER_HASH=$(mkpasswd --method=yescrypt "${ADMIN_USER_PASSWORD}")
 
-echo "    Hash generated for '${LIVE_USER}' ($(echo ${LIVE_USER_HASH} | cut -c1-6)...)."
-echo "    Hash generated for '${ADMIN_USER}' ($(echo ${ADMIN_USER_HASH} | cut -c1-6)...)."
+echo "    Hashed '${LIVE_USER}'."
+echo "    Hashed '${ADMIN_USER}'."
 
 # =============================================================================
-# PART 1 b: install sudoers policy
+# PART 2: Install live-config adduser hook (runs at 1000, before passwd at 2000)
+# Creates sysadmin after user-setup (0030) has finished.
 # =============================================================================
 
-echo "==> Installing sudoers policy..."
+echo "==> [2/4] Installing live-config adduser hook (${ADDUSER_HOOK})..."
 
-mkdir -p "${SUDOERS_DIR}"
+mkdir -p "${LIVE_CONFIG_DIR}"
+
+cat > "${ADDUSER_HOOK}" << EOF
+#!/bin/sh
+# 1000-mse-adduser — live-config hook
+# Creates the sysadmin account as part of the live-config boot sequence.
+# Runs after 0030-user-setup, before 2000-mse-passwd.
+
+STAMP="/var/lib/live/config/1000-mse-adduser"
+[ -e "\${STAMP}" ] && exit 0
+
+ADMIN_USER="${ADMIN_USER}"
+ADMIN_USER_GECOS="${ADMIN_USER_GECOS}"
+ADMIN_USER_SHELL="${ADMIN_USER_SHELL}"
+
+if ! id "\${ADMIN_USER}" >/dev/null 2>&1; then
+    useradd \\
+        --create-home \\
+        --shell "\${ADMIN_USER_SHELL}" \\
+        --comment "\${ADMIN_USER_GECOS}" \\
+        --groups sudo \\
+        "\${ADMIN_USER}"
+    echo "MSE: created '\${ADMIN_USER}'."
+else
+    usermod -aG sudo "\${ADMIN_USER}"
+    echo "MSE: '\${ADMIN_USER}' already exists — ensured sudo membership."
+fi
+
+mkdir -p /var/lib/live/config
+touch "\${STAMP}"
+EOF
+
+chmod 755 "${ADDUSER_HOOK}"
+echo "    Installed: ${ADDUSER_HOOK}"
+
+# =============================================================================
+# PART 3: Install live-config passwd hook (runs at 2000)
+# Sets hashed passwords for both users after they exist.
+# =============================================================================
+
+echo "==> [3/4] Installing live-config passwd hook (${PASSWD_HOOK})..."
+
+cat > "${PASSWD_HOOK}" << EOF
+#!/bin/sh
+# 2000-mse-passwd — live-config hook
+# Sets yescrypt-hashed passwords for live user and sysadmin.
+# Also removes live user from sudo group and cleans up 0040-sudo artefacts.
+# Passwords were hashed at build time — no cleartext in this file.
+
+STAMP="/var/lib/live/config/2000-mse-passwd"
+[ -e "\${STAMP}" ] && exit 0
+
+LIVE_USER="${LIVE_USER}"
+LIVE_USER_HASH="${LIVE_USER_HASH}"
+
+ADMIN_USER="${ADMIN_USER}"
+ADMIN_USER_HASH="${ADMIN_USER_HASH}"
+
+echo "MSE: setting passwords..."
+
+# Set password for live user
+if id "\${LIVE_USER}" >/dev/null 2>&1; then
+    usermod --password "\${LIVE_USER_HASH}" "\${LIVE_USER}"
+    echo "  Password set for '\${LIVE_USER}'."
+else
+    echo "  WARNING: '\${LIVE_USER}' not found."
+fi
+
+# Set password for sysadmin
+if id "\${ADMIN_USER}" >/dev/null 2>&1; then
+    usermod --password "\${ADMIN_USER_HASH}" "\${ADMIN_USER}"
+    echo "  Password set for '\${ADMIN_USER}'."
+else
+    echo "  WARNING: '\${ADMIN_USER}' not found."
+fi
+
+# Remove live user from sudo group (exam safety)
+if groups "\${LIVE_USER}" 2>/dev/null | grep -q sudo; then
+    gpasswd -d "\${LIVE_USER}" sudo 2>/dev/null || true
+    echo "  Removed '\${LIVE_USER}' from sudo group."
+fi
+
+# Remove /etc/sudoers.d/live written by 0040-sudo if it slipped through
+if [ -f /etc/sudoers.d/live ]; then
+    rm -f /etc/sudoers.d/live
+    echo "  Removed /etc/sudoers.d/live."
+fi
+
+echo "  Groups: \${LIVE_USER}=\$(groups \${LIVE_USER} 2>/dev/null)"
+echo "  Groups: \${ADMIN_USER}=\$(groups \${ADMIN_USER} 2>/dev/null)"
+echo "MSE: password setup complete."
+
+mkdir -p /var/lib/live/config
+touch "\${STAMP}"
+EOF
+
+chmod 755 "${PASSWD_HOOK}"
+echo "    Installed: ${PASSWD_HOOK}"
+
+# =============================================================================
+# PART 4: Sudoers policy + disable 0040-sudo component
+# =============================================================================
+
+echo "==> [4/4] Installing sudoers policy and disabling 0040-sudo..."
+
+# Sudoers policy baked into the image at build time
+mkdir -p /etc/sudoers.d
 
 cat > "${SUDOERS_FILE}" << EOF
 # MSE Exam sudoers policy
@@ -65,121 +184,20 @@ ${ADMIN_USER} ALL=(ALL) PASSWD: ALL
 ${LIVE_USER} ALL=(ALL) !ALL
 EOF
 
-# sudoers files must be owned root:root and mode 0440
 chmod 0440 "${SUDOERS_FILE}"
 chown root:root "${SUDOERS_FILE}"
-
-# Validate syntax — visudo exits non-zero if the file is invalid
 visudo -c -f "${SUDOERS_FILE}"
-echo "    Sudoers policy installed and validated: ${SUDOERS_FILE}"
+echo "    Sudoers policy validated: ${SUDOERS_FILE}"
 
-# =============================================================================
-# PART 2: Install boot-time setup script (contains hashes, not cleartext)
-# =============================================================================
+# Disable live-config's 0040-sudo component which would grant user NOPASSWD
+mkdir -p "${LIVE_CONF_DIR}"
 
-echo "==> [2/3] Installing boot-time user setup script..."
-
-mkdir -p "$(dirname ${SETUP_SCRIPT})"
-
-# Hashes are expanded here at build time (unquoted EOF).
-# The resulting script on disk contains only yescrypt hashes.
-cat > "${SETUP_SCRIPT}" << EOF
-#!/bin/sh
-# ${SERVICE_NAME}.sh
-# Runs at boot via systemd. Configures users using pre-hashed passwords.
-# Passwords were hashed at build time with yescrypt — no cleartext on disk.
-# Installed by: setup_users.hook.chroot
-
-set -e
-
-LIVE_USER="${LIVE_USER}"
-LIVE_USER_HASH="${LIVE_USER_HASH}"
-
-ADMIN_USER="${ADMIN_USER}"
-ADMIN_USER_HASH="${ADMIN_USER_HASH}"
-ADMIN_USER_GECOS="${ADMIN_USER_GECOS}"
-ADMIN_USER_SHELL="${ADMIN_USER_SHELL}"
-
-echo "MSE user setup: starting..."
-
-# --- Wait for live-config to create the live user ---
-RETRIES=10
-while [ \${RETRIES} -gt 0 ]; do
-    if id "\${LIVE_USER}" >/dev/null 2>&1; then
-        break
-    fi
-    echo "Waiting for live user '\${LIVE_USER}'... (\${RETRIES} retries left)"
-    sleep 1
-    RETRIES=\$((RETRIES - 1))
-done
-
-if ! id "\${LIVE_USER}" >/dev/null 2>&1; then
-    echo "ERROR: Live user '\${LIVE_USER}' not found after waiting. Aborting."
-    exit 1
-fi
-
-# --- Set hashed password for live user ---
-echo "\${LIVE_USER}:\${LIVE_USER_HASH}" | chpasswd -e
-echo "Password hash applied for '\${LIVE_USER}'."
-
-# --- Remove live user from sudo group (exam safety) ---
-if groups "\${LIVE_USER}" | grep -q sudo; then
-    deluser "\${LIVE_USER}" sudo 2>/dev/null || gpasswd -d "\${LIVE_USER}" sudo
-    echo "Removed '\${LIVE_USER}' from sudo group."
-else
-    echo "'\${LIVE_USER}' is not in sudo group — no change needed."
-fi
-
-# --- Create sysadmin user if not already present ---
-if ! id "\${ADMIN_USER}" >/dev/null 2>&1; then
-    useradd \\
-        --create-home \\
-        --shell "\${ADMIN_USER_SHELL}" \\
-        --comment "\${ADMIN_USER_GECOS}" \\
-        --password "\${ADMIN_USER_HASH}" \\
-        --groups sudo \\
-        "\${ADMIN_USER}"
-    echo "User '\${ADMIN_USER}' created with yescrypt password hash."
-else
-    echo "User '\${ADMIN_USER}' already exists — updating password and groups."
-    echo "\${ADMIN_USER}:\${ADMIN_USER_HASH}" | chpasswd -e
-    usermod -aG sudo "\${ADMIN_USER}"
-fi
-
-echo "Group memberships:"
-echo "  \${LIVE_USER}:  \$(groups \${LIVE_USER})"
-echo "  \${ADMIN_USER}: \$(groups \${ADMIN_USER})"
-
-echo "MSE user setup: complete."
+cat > "${LIVE_CONF_FILE}" << EOF
+# MSE Exam live-config overrides
+# Disables 0040-sudo which grants live user NOPASSWD sudo access.
+# Sudo policy is managed via ${SUDOERS_FILE} instead.
+LIVE_CONFIG_NOCOMPONENTS="sudo"
 EOF
 
-chmod 700 "${SETUP_SCRIPT}"
-echo "    Installed: ${SETUP_SCRIPT}"
-
-# =============================================================================
-# PART 3: Install and enable the systemd service unit
-# =============================================================================
-
-echo "==> [3/3] Installing systemd service ${SERVICE_NAME}..."
-
-cat > "${SERVICE_FILE}" << EOF
-[Unit]
-Description=MSE Exam User Setup
-After=live-config.service
-Requires=live-config.service
-
-[Service]
-Type=oneshot
-ExecStart=${SETUP_SCRIPT}
-RemainAfterExit=yes
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl enable "${SERVICE_NAME}.service"
-
-echo "    Service enabled: ${SERVICE_NAME}.service"
-echo "==> User setup hook complete."
+echo "    0040-sudo disabled via: ${LIVE_CONF_FILE}"
+echo "==> setup_users hook complete."
