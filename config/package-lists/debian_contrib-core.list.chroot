@@ -8,5 +8,3 @@
 firmware-b43-installer
 firmware-b43legacy-installer
 nvidia-settings=550.163.01-1
-#virtualbox-guest-utils
-#virtualbox-guest-x11

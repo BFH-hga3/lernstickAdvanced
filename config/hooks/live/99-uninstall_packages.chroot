@@ -116,7 +116,6 @@ apt-get purge -y \
 	projecteur \
 	gnome-connections \
 	lernstick-flatpak-musescore \
-	flatpack \
 	timidity \
 	pspp \
 	lernstick-onboard \
@@ -125,8 +124,7 @@ apt-get purge -y \
 	sshfs \
 	openssh-client \
 	openssh-server \
-	openssh-sftp-server \
-	firebird* 
+	openssh-sftp-server
 
 
 # =============================================================================

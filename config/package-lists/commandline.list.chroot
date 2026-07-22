@@ -11,7 +11,7 @@ bash-completion
 bind9-host
 btop
 command-not-found
-#deborphan
+deborphan
 debtree
 dialog
 duf

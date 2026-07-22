@@ -20,14 +20,14 @@ lernstick-libinput-quirks
 #lernstick-mc
 lernstick-menu
 lernstick-nvtop
-lernstick-onboard
+#lernstick-onboard
 #lernstick-openjdk-8-jre
 lernstick-python-apt-common
 lernstick-ranger
 #lernstick-software-properties-gtk
 lernstick-speech-dispatcher
 lernstick-systemd
-lernstick-texlive-base
+#lernstick-texlive-base
 lernstick-theme
 lernstick-vim-common
 lernstick-virtualbox-guest-utils

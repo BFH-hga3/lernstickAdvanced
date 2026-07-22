@@ -19,7 +19,7 @@ gnome-shell-extension-workspace-indicator
 # https://www.reddit.com/r/gnome/comments/1b9oihr/gnome_settings_apps_nothing_there/
 malcontent
 nautilus
-#nautilus-wipe
+nautilus-wipe
 #network-manager-fortisslvpn-gnome
 network-manager-gnome
 #network-manager-iodine-gnome

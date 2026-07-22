@@ -6,12 +6,12 @@
 ################################################################################
 
 exe-thumbnailer
-jbackpack-restore
-jbackpack-restore-admin
+#jbackpack-restore
+#jbackpack-restore-admin
 lernstick-exam-client
-lernstick-flatpak-musescore
+#lernstick-flatpak-musescore
 lernstick-libreoffice-lockdown
-lernstick-pspp
+#lernstick-pspp
 #lernstick-r-base-core
 #lernstick-virtualbox
 #lernstick-wine
