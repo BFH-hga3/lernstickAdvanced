@@ -1,0 +1,55 @@
+#!/bin/sh
+# 98-mse_dconf_compile.chroot
+#
+# Installs the shared live-config boot hook 0500-mse-dconf which compiles
+# the dconf database at first boot, AFTER live-config has completed its own
+# GNOME initialisation (otherwise live-config would overwrite our settings).
+#
+# This hook is intentionally separate and runs LAST among the MSE dconf
+# producers so it doesn't matter which of them wrote keyfiles — this just
+# installs the compiler. All MSE dconf keyfiles are compiled together:
+#   01-mse-wallpaper  (93-mse_wallpaper.chroot)
+#   02-mse-dock       (91-mse_dock.chroot)
+#   03-mse-keyboard   (96-mse_keyboard.chroot)
+#
+# Must run after all hooks that write /etc/dconf/db/local.d/ keyfiles.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+LIVE_CONFIG_DIR="/lib/live/config"
+DCONF_HOOK="${LIVE_CONFIG_DIR}/0500-mse-dconf"
+
+# =============================================================================
+# PART 1: Install the live-config dconf compile hook
+# =============================================================================
+
+echo "==> [1/1] Installing live-config dconf compile hook..."
+
+mkdir -p "${LIVE_CONFIG_DIR}"
+
+cat > "${DCONF_HOOK}" << 'HOOK_EOF'
+#!/bin/sh
+# 0500-mse-dconf — live-config hook
+# Compiles all MSE dconf databases at boot, after live-config has completed
+# its own GNOME initialisation. Covers wallpaper, dock, and keyboard keyfiles
+# in /etc/dconf/db/local.d/.
+# Installed by: 98-mse_dconf_compile.chroot
+
+STAMP="/var/lib/live/config/0500-mse-dconf"
+[ -e "${STAMP}" ] && exit 0
+
+echo "MSE: compiling dconf database..."
+dconf update
+echo "MSE: dconf compiled."
+
+mkdir -p /var/lib/live/config
+touch "${STAMP}"
+HOOK_EOF
+
+chmod 755 "${DCONF_HOOK}"
+echo "    live-config hook installed: ${DCONF_HOOK}"
+echo "==> MSE dconf compile hook complete."

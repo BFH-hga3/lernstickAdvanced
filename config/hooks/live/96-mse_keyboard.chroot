@@ -1,0 +1,58 @@
+#!/bin/sh
+# 96-mse_keyboard.chroot
+#
+# Configures the GNOME keyboard input sources for the MSE exam environment.
+# Writes the input-sources dconf keyfile + locks so students get Swiss German
+# (ch+de) as the default layout with ch+fr, it and us also available.
+#
+# This is SEPARATE from /etc/default/keyboard (set by 15-keyboard.chroot):
+#   - /etc/default/keyboard  → console + X11 base keyboard (TTY, login screen)
+#   - GNOME input-sources     → the layout GNOME actually uses in the session
+# GNOME ignores /etc/default/keyboard for its own session layout, so both
+# are needed.
+#
+# dconf is compiled at boot by 0500-mse-dconf (installed by
+# 98-mse_dconf_compile.chroot), NOT here.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+# GNOME input sources, in order. First = default.
+# xkb variant 'ch+de' = Swiss German, 'ch+fr' = Swiss French.
+INPUT_SOURCES="[('xkb', 'ch+de'), ('xkb', 'ch+fr'), ('xkb', 'it'), ('xkb', 'us')]"
+
+# =============================================================================
+# DERIVED PATHS — do not edit
+# =============================================================================
+
+DCONF_DIR="/etc/dconf/db/local.d"
+DCONF_LOCKS_DIR="${DCONF_DIR}/locks"
+
+# =============================================================================
+# PART 1: Install keyboard input-sources dconf keyfile + locks
+# =============================================================================
+
+echo "==> [1/1] Installing keyboard input-sources dconf config..."
+
+mkdir -p "${DCONF_DIR}" "${DCONF_LOCKS_DIR}"
+
+cat > "${DCONF_DIR}/03-mse-keyboard" << DCONF_EOF
+[org/gnome/desktop/input-sources]
+# Swiss German (ch+de) is first = default keyboard layout.
+sources=${INPUT_SOURCES}
+current=uint32 0
+per-window=false
+show-all-sources=true
+DCONF_EOF
+
+cat > "${DCONF_LOCKS_DIR}/mse-keyboard-locks" << 'LOCKS_EOF'
+/org/gnome/desktop/input-sources/sources
+/org/gnome/desktop/input-sources/current
+LOCKS_EOF
+
+echo "    dconf keyfile: ${DCONF_DIR}/03-mse-keyboard"
+echo "    dconf locks:   ${DCONF_LOCKS_DIR}/mse-keyboard-locks"
+echo "==> MSE keyboard configuration complete."

@@ -100,7 +100,34 @@ echo "==> [6/6] Purging build-time tools..."
 # NOTE: whois is no longer installed in the chroot — mkpasswd now
 # runs on the build host in functions.sh. Nothing to purge here.
 
-apt-get purge -y imagemagick librsvg2-bin
+apt-get purge -y \
+	imagemagick \
+	librsvg2-bin
+
+
+echo "==> [7/6] Purging not needed utils..."
+
+apt-get purge -y \
+	jbackpack \
+	jbackpack-restore \
+	jbackpack-restore-admin \
+	wxmaxima \
+	gnome-calendar \
+	projecteur \
+	gnome-connections \
+	lernstick-flatpak-musescore \
+	flatpack \
+	timidity \
+	pspp \
+	lernstick-onboard \
+	onboard \
+	rsync \
+	sshfs \
+	openssh-client \
+	openssh-server \
+	openssh-sftp-server \
+	firebird* 
+
 
 # =============================================================================
 # Final cleanup

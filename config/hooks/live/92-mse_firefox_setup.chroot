@@ -1,18 +1,22 @@
 #!/bin/sh
 # 92-mse_firefox_setup.chroot
-# firefox_setup.hook.chroot
 #
-# Consolidates all Firefox configuration for the exam environment:
-#   1. Writes policies.json (system-wide enterprise policy)
-#   2. Symlinks /etc/firefox-esr/policies/ -> /usr/lib/firefox-esr/distribution/
-#   3. Creates a shared Firefox profile with:
-#        - profiles.ini (selects exam profile by default)
-#        - user.js      (privacy, session, UI preferences)
-#        - bookmarks.html (two bookmarks: MSE Moodle, MSE FileDrop — imported on first run)
-#   4. Creates the desktop launcher (private mode, bookmarks toolbar visible)
+# Configures Firefox ESR for the MSE exam environment:
+#   1. System-wide enterprise policy (policies.json)
+#   2. Shared Firefox profile (profiles.ini + user.js)
+#   3. Two separate desktop launchers: one for Moodle, one for FileDrop
+#   4. Trust-launcher autostart (dock is configured by 91-mse_dock.chroot)
+#
+# Design decisions:
+#   - TWO launchers instead of one combined script. The combined
+#     "open both URLs in one instance" approach was unreliable — the
+#     second firefox invocation raced with the first instance's startup.
+#     Two independent launchers each open one URL cleanly.
+#   - NO bookmarks. Removed entirely — the launchers replace them.
+#   - Translations disabled (browser.translations.*).
+#   - Private-browsing mozilla.org info page fully suppressed.
 #
 # All configurable properties are defined at the top.
-# All derived paths are computed from the base variables — edit only the top block.
 
 set -e
 
@@ -21,30 +25,29 @@ set -e
 # =============================================================================
 
 LIVE_USER="user"
-
-# Firefox profile name (used as directory name and in profiles.ini)
 FF_PROFILE_NAME="exam.default"
 
 # URLs
 URL_MOODLE="https://moodle.msengineering.ch"
 URL_FILEDROP="https://drive.switch.ch/index.php/s/NnNaOgN4lHaqe2M"
-URL_TEMPLATE="https://drive.switch.ch/index.php/s/tQLKBilUJ7l8DLj"
 
 # System policy paths
 POLICY_FILE="/usr/lib/firefox-esr/distribution/policies.json"
 POLICY_LINK_DIR="/etc/firefox-esr/policies"
 
-# Desktop launcher — installed in /usr/share/applications/ so GNOME trusts it
-# without requiring the user to right-click "Allow Launching".
-LAUNCHER="/usr/share/applications/mse-exam-browser.desktop"
-LAUNCHER_SKEL_LINK="/etc/skel/Desktop/mse-exam-browser.desktop"
+# Desktop launchers (installed in /usr/share/applications/ for GNOME trust)
+LAUNCHER_MOODLE="/usr/share/applications/mse-moodle.desktop"
+LAUNCHER_FILEDROP="/usr/share/applications/mse-filedrop.desktop"
+LAUNCHER_MOODLE_SKEL="/etc/skel/Desktop/mse-moodle.desktop"
+LAUNCHER_FILEDROP_SKEL="/etc/skel/Desktop/mse-filedrop.desktop"
 
-# Wrapper script that opens both URLs in the same Firefox private window
-OPEN_SCRIPT="/usr/local/bin/mse-exam-browser.sh"
+# Wrapper scripts (one per URL)
+SCRIPT_MOODLE="/usr/local/bin/mse-moodle.sh"
+SCRIPT_FILEDROP="/usr/local/bin/mse-filedrop.sh"
 
-# GNOME dock configuration
-DCONF_DOCK_FILE="/etc/dconf/db/local.d/02-mse-dock"
-DCONF_LOCKS_DIR="/etc/dconf/db/local.d/locks"
+# Trust launcher (marks .desktop files trusted at first login)
+TRUST_SCRIPT="/usr/local/bin/mse-trust-launcher.sh"
+TRUST_AUTOSTART="/etc/skel/.config/autostart/mse-trust-launcher.desktop"
 
 # =============================================================================
 # DERIVED PATHS — computed from variables above, do not edit
@@ -74,14 +77,21 @@ cat > "${POLICY_FILE}" << 'EOF'
     "DisableFirefoxAccounts":      true,
     "DisableSetDesktopBackground": true,
     "DisableTelemetry":            true,
-    "DisplayBookmarksToolbar":     "always",
+    "DisableFirefoxStudies":       true,
+    "DisablePocket":               true,
+    "DisableProfileImport":        true,
+    "DisableProfileRefresh":       true,
+    "DisplayBookmarksToolbar":     "never",
     "DisplayMenuBar":              "never",
     "HideFirefoxAccountButton":    true,
     "NewTabPage":                  false,
     "NoDefaultBookmarks":          true,
+    "OfferToSaveLogins":           false,
     "OverrideFirstRunPage":        "",
     "OverridePostUpdatePage":      "",
     "PasswordManagerEnabled":      false,
+    "PromptForDownloadLocation":   false,
+    "TranslateEnabled":            false,
     "WebsiteFilter": {
       "Block": ["<all_urls>"],
       "Exceptions": [
@@ -95,7 +105,8 @@ cat > "${POLICY_FILE}" << 'EOF'
       "ExtensionRecommendations": false,
       "FeatureRecommendations":   false,
       "UrlbarInterventions":      false,
-      "SkipOnboarding":           true
+      "SkipOnboarding":           true,
+      "MoreFromMozilla":          false
     },
     "PrivateBrowsingModeAvailability": 1,
     "FirefoxHome": {
@@ -107,44 +118,26 @@ cat > "${POLICY_FILE}" << 'EOF'
       "SponsoredPocket":          false,
       "Snippets":                 false,
       "Locked":                   true
-    },
-    "ManagedBookmarks": [
-      {
-        "toplevel_name": "MSE Exam"
-      },
-      {
-        "name": "MSE Moodle",
-        "url":  "https://moodle.msengineering.ch"
-      },
-      {
-        "name": "MSE FileDrop",
-        "url":  "https://drive.switch.ch/index.php/s/NnNaOgN4lHaqe2M"
-      }
-    ]
+    }
   }
 }
 EOF
 
 echo "    Written: ${POLICY_FILE}"
 
-# Symlink /etc/firefox-esr/policies/policies.json -> POLICY_FILE
-# firefox-esr creates /etc/firefox-esr/ as a directory; placing files there
-# via includes.chroot_after_packages causes a conflict. Hook-time symlink
-# avoids the issue.
 mkdir -p "${POLICY_LINK_DIR}"
 rm -f "${POLICY_LINK_DIR}/policies.json"
 ln -s "${POLICY_FILE}" "${POLICY_LINK_DIR}/policies.json"
 echo "    Symlinked: ${POLICY_LINK_DIR}/policies.json -> ${POLICY_FILE}"
 
 # =============================================================================
-# PART 2: Firefox exam profile
+# PART 2: Firefox exam profile (profiles.ini + user.js)
 # =============================================================================
 
 echo "==> [2/4] Creating Firefox exam profile..."
 
 mkdir -p "${FF_PROFILE_DIR}"
 
-# profiles.ini — tells Firefox to load FF_PROFILE_NAME by default
 cat > "${FF_PROFILES_INI}" << EOF
 [Profile0]
 Name=${FF_PROFILE_NAME}
@@ -159,222 +152,170 @@ EOF
 
 echo "    profiles.ini written: ${FF_PROFILES_INI}"
 
-# user.js — privacy, session and UI preferences
-cat > "${FF_USER_JS}" << EOF
+cat > "${FF_USER_JS}" << 'EOF'
 // -----------------------------------------------------------------------
 // MSE Exam Firefox profile — user.js
-// Generated by: firefox_setup.hook.chroot
-// Overrides prefs set by policies.json at the preference level.
+// Generated by: 92-mse_firefox_setup.chroot
 // -----------------------------------------------------------------------
 
 // --- Private browsing & session ---
-user_pref("browser.privatebrowsing.autostart",        true);
-user_pref("browser.sessionstore.enabled",             false);
-user_pref("browser.sessionstore.resume_from_crash",   false);
-user_pref("privacy.sanitize.sanitizeOnShutdown",      true);
-user_pref("privacy.clearOnShutdown.cookies",          true);
-user_pref("privacy.clearOnShutdown.cache",            true);
-user_pref("privacy.clearOnShutdown.history",          true);
-user_pref("privacy.clearOnShutdown.sessions",         true);
-user_pref("privacy.clearOnShutdown.formdata",         true);
+user_pref("browser.privatebrowsing.autostart",         true);
+user_pref("browser.sessionstore.enabled",              false);
+user_pref("browser.sessionstore.resume_from_crash",    false);
+user_pref("privacy.sanitize.sanitizeOnShutdown",       true);
+user_pref("privacy.clearOnShutdown.cookies",           true);
+user_pref("privacy.clearOnShutdown.cache",             true);
+user_pref("privacy.clearOnShutdown.history",           true);
+user_pref("privacy.clearOnShutdown.sessions",          true);
+user_pref("privacy.clearOnShutdown.formdata",          true);
 
 // --- Password manager ---
-user_pref("signon.rememberSignons",   false);
-user_pref("signon.autofillForms",     false);
+user_pref("signon.rememberSignons",                    false);
+user_pref("signon.autofillForms",                      false);
 
 // --- Address bar ---
-user_pref("browser.urlbar.suggest.history",           false);
-user_pref("browser.urlbar.suggest.bookmark",          true);
-user_pref("browser.urlbar.suggest.openpage",          false);
-user_pref("browser.urlbar.autocomplete.enabled",      false);
+user_pref("browser.urlbar.suggest.history",            false);
+user_pref("browser.urlbar.suggest.bookmark",           false);
+user_pref("browser.urlbar.suggest.openpage",           false);
+user_pref("browser.urlbar.autocomplete.enabled",       false);
 
-// --- Bookmarks toolbar (belt-and-suspenders alongside policy) ---
-user_pref("browser.toolbars.bookmarks.visibility",    "always");
+// --- Bookmarks toolbar hidden (no bookmarks in this build) ---
+user_pref("browser.toolbars.bookmarks.visibility",     "never");
 
 // --- New tab & homepage ---
-user_pref("browser.newtabpage.enabled",               false);
-user_pref("browser.startup.homepage",                 "about:blank");
+user_pref("browser.newtabpage.enabled",                false);
+user_pref("browser.startup.homepage",                  "about:blank");
+user_pref("browser.startup.page",                      0);
+
+// --- Translations: fully disabled ---
+// Prevents the translation popup/offer from appearing on foreign-language pages.
+user_pref("browser.translations.enable",               false);
+user_pref("browser.translations.automaticallyPopup",   false);
+user_pref("browser.translations.panelShown",           true);
+
+// --- Private browsing info page: fully suppressed ---
+// Firefox tries to open https://www.mozilla.org/privacy/firefox/ and the
+// private-browsing "about" page on private-window start. Both are blocked
+// by the firewall and show an error tab. These prefs prevent them opening.
+user_pref("browser.privatebrowsing.welcomeShown",      true);
+user_pref("browser.privatebrowsing.vpnpromourl",       "");
+user_pref("browser.privatebrowsing.promoEnabled",      false);
+user_pref("browser.privatebrowsing.infoEnabled",       false);
+user_pref("browser.privatebrowsing.felt.enabled",      false);
+user_pref("privacy.trackingprotection.introCount",     20);
+user_pref("privacy.trackingprotection.pbmode.enabled", false);
+user_pref("extensions.pocket.enabled",                 false);
 
 // --- Telemetry & first-run noise ---
-user_pref("toolkit.telemetry.enabled",                false);
-user_pref("browser.startup.firstrunSkipsHomepage",    true);
-user_pref("trailhead.firstrun.didSeeAboutWelcome",    true);
-user_pref("datareporting.healthreport.uploadEnabled", false);
-user_pref("app.shield.optoutstudies.enabled",         false);
+user_pref("toolkit.telemetry.enabled",                 false);
+user_pref("browser.startup.firstrunSkipsHomepage",     true);
+user_pref("trailhead.firstrun.didSeeAboutWelcome",     true);
+user_pref("datareporting.healthreport.uploadEnabled",  false);
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("app.shield.optoutstudies.enabled",          false);
 
-// --- Private browsing welcome page ---
-// Prevents Firefox from opening the mozilla.org private browsing
-// info tab on startup, which is blocked by the lernstick firewall.
-user_pref("browser.privatebrowsing.welcomeShown",     true);
-user_pref("privacy.trackingprotection.introCount",    20);
-user_pref("privacy.trackingprotection.pbmode.enabled", false);
+// --- Suppress "know your rights" and default-browser checks ---
+user_pref("browser.rights.3.shown",                    true);
+user_pref("browser.shell.checkDefaultBrowser",         false);
 EOF
 
 echo "    user.js written: ${FF_USER_JS}"
 
 # =============================================================================
-# PART 3: Bookmarks via bookmarks.html + user.js import
-# =============================================================================
-# The places.sqlite approach is fragile — the schema changes between Firefox
-# versions and Firefox silently rebuilds an unrecognised database, losing all
-# bookmarks. The reliable cross-version approach is:
-#   1. Decode a Netscape Bookmark File (bookmarks.html) into the profile
-#   2. Set user.js prefs to import it on first run and show the toolbar
-# Firefox has supported this import mechanism since version 1.0.
-
-echo "==> [3/4] Bookmarks configured via ManagedBookmarks enterprise policy..."
-# Bookmarks are now set via the ManagedBookmarks key in policies.json.
-# This is the official Firefox enterprise mechanism — it works in all
-# modes including private browsing, requires no import, survives session
-# wipes, and cannot be removed by the user.
-# The bookmarks.html + browser.places.importBookmarksHTML approach was
-# unreliable in private browsing autostart mode because Firefox uses a
-# temporary in-memory database and does not process the import pref.
-echo "    MSE Moodle and MSE FileDrop bookmarks set via policies.json."
-
-# =============================================================================
-# PART 4: Desktop launcher
+# PART 3: Two wrapper scripts + two desktop launchers
 # =============================================================================
 
-echo "==> [4/4] Installing desktop launcher, wrapper script and dock config..."
+echo "==> [3/4] Installing Moodle and FileDrop launchers..."
 
-# --- Wrapper script: opens both URLs in one Firefox private-window session ---
-# Firefox --private-window only accepts one URL directly. To open both Moodle
-# and FileDrop we start Firefox with the first URL, wait for it to be ready,
-# then open the second URL in the same instance via a second invocation
-# (Firefox passes the URL to the running instance when already open).
+mkdir -p /usr/local/bin
 
-mkdir -p "$(dirname ${OPEN_SCRIPT})"
-
-cat > "${OPEN_SCRIPT}" << EOF
+# --- Moodle wrapper ---
+cat > "${SCRIPT_MOODLE}" << EOF
 #!/bin/sh
-# mse-exam-browser.sh
-# Opens MSE Moodle and MSE FileDrop in Firefox private mode.
-# Installed by: firefox_setup.hook.chroot
-
-URL_MOODLE="${URL_MOODLE}"
-URL_FILEDROP="${URL_FILEDROP}"
-
-# Open first URL in a new private window
-firefox --private-window "\${URL_MOODLE}" &
-
-# Wait for Firefox to initialise, then open second URL in the same instance.
-# Firefox detects the running instance and opens it as a new tab/window.
-sleep 3
-firefox --private-window "\${URL_FILEDROP}"
+# mse-moodle.sh — opens MSE Moodle in Firefox private mode.
+exec firefox --private-window "${URL_MOODLE}"
 EOF
+chmod 755 "${SCRIPT_MOODLE}"
+echo "    Wrapper: ${SCRIPT_MOODLE}"
 
-chmod +x "${OPEN_SCRIPT}"
-echo "    Wrapper script installed: ${OPEN_SCRIPT}"
+# --- FileDrop wrapper ---
+cat > "${SCRIPT_FILEDROP}" << EOF
+#!/bin/sh
+# mse-filedrop.sh — opens MSE FileDrop in Firefox private mode.
+exec firefox --private-window "${URL_FILEDROP}"
+EOF
+chmod 755 "${SCRIPT_FILEDROP}"
+echo "    Wrapper: ${SCRIPT_FILEDROP}"
 
-# --- Desktop launcher in /usr/share/applications/ ---
-# Installing here makes GNOME trust the launcher automatically.
-# Files on the Desktop that point outside /usr/share/applications/ require
-# the user to right-click "Allow Launching" — this avoids that entirely.
-
-mkdir -p "$(dirname ${LAUNCHER})"
-
-cat > "${LAUNCHER}" << EOF
+# --- Moodle launcher ---
+mkdir -p "$(dirname ${LAUNCHER_MOODLE})"
+cat > "${LAUNCHER_MOODLE}" << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=MSE Exam Browser
-Comment=Opens Moodle and FileDrop in Firefox private mode
-Exec=${OPEN_SCRIPT}
+Name=MSE Moodle
+Comment=Open MSE Moodle in Firefox (private mode)
+Exec=${SCRIPT_MOODLE}
 Icon=firefox-esr
 Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 EOF
+echo "    Launcher: ${LAUNCHER_MOODLE}"
 
-echo "    Launcher installed: ${LAUNCHER}"
-
-# --- Symlink into skel Desktop so it appears for the live user ---
-# Symlink to /usr/share/applications/ entry → GNOME trusts it automatically.
-mkdir -p "$(dirname ${LAUNCHER_SKEL_LINK})"
-ln -sf "${LAUNCHER}" "${LAUNCHER_SKEL_LINK}"
-echo "    Desktop symlink: ${LAUNCHER_SKEL_LINK} -> ${LAUNCHER}"
-
-# Mark the desktop launcher as trusted so GNOME shows it as an
-# executable application rather than an untrusted file.
-# GNOME checks for the user.trusted extended attribute on .desktop
-# files placed on the Desktop outside /usr/share/applications/.
-# The symlink must be marked, not the target in /usr/share/applications/.
-# attr/setfattr is used since includes.chroot_after_packages does not
-# preserve extended attributes.
-if command -v attr >/dev/null 2>&1; then
-    attr -s trusted -V "" "${LAUNCHER_SKEL_LINK}" 2>/dev/null || true
-    echo "    Trusted xattr set on: ${LAUNCHER_SKEL_LINK}"
-elif command -v setfattr >/dev/null 2>&1; then
-    setfattr -n user.trusted -v "" "${LAUNCHER_SKEL_LINK}" 2>/dev/null || true
-    echo "    Trusted xattr set on: ${LAUNCHER_SKEL_LINK}"
-else
-    echo "    WARNING: attr/setfattr not found — desktop launcher may show"
-    echo "             as untrusted in GNOME. Add 'attr' to package lists."
-fi
-
-# --- GNOME dock: replace Firefox with our MSE launcher ---
-# Sets dash-to-dock favorites via dconf system defaults.
-# Removes org.gnome.Nautilus, org.gnome.Calendar etc. — keep only what
-# is needed in the exam environment.
-
-mkdir -p "${DCONF_LOCKS_DIR}"
-
-cat > "${DCONF_DOCK_FILE}" << EOF
-[org/gnome/shell]
-favorite-apps=['mse-exam-browser.desktop', 'org.gnome.Screenshot.desktop', 'org.gnome.Nautilus.desktop']
+# --- FileDrop launcher ---
+cat > "${LAUNCHER_FILEDROP}" << EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=MSE FileDrop
+Comment=Open MSE FileDrop in Firefox (private mode)
+Exec=${SCRIPT_FILEDROP}
+Icon=firefox-esr
+Terminal=false
+Categories=Network;WebBrowser;
+StartupNotify=true
 EOF
+echo "    Launcher: ${LAUNCHER_FILEDROP}"
 
-cat >> "${DCONF_LOCKS_DIR}/mse-wallpaper-locks" << EOF
-/org/gnome/shell/favorite-apps
-EOF
-
-# Recompile dconf database
-# dconf update is deferred to boot via live-config hook 0500-mse-dconf
-# (installed by 93-mse_branding.chroot). Calling dconf update here would
-# be overridden by live-config at first boot anyway.
-echo "    GNOME dock configured: ${DCONF_DOCK_FILE}"
+# --- Symlink both into skel Desktop ---
+mkdir -p "$(dirname ${LAUNCHER_MOODLE_SKEL})"
+ln -sf "${LAUNCHER_MOODLE}"   "${LAUNCHER_MOODLE_SKEL}"
+ln -sf "${LAUNCHER_FILEDROP}" "${LAUNCHER_FILEDROP_SKEL}"
+echo "    Desktop symlinks created for both launchers."
 
 # =============================================================================
-# Install XDG autostart script to mark desktop launcher as trusted
+# PART 4: Trust-launcher autostart
 # =============================================================================
-# GNOME requires .desktop files on the Desktop to carry a user.trusted
-# extended attribute to be launchable without an "Allow Executing" dialog.
-# xattrs are not preserved when skel is copied to /home/user/ at login.
-# The script lives in /usr/local/bin/ (global, permanent, no home clutter).
-# The autostart .desktop in skel removes only itself after first run.
 
-TRUST_SCRIPT="/usr/local/bin/mse-trust-launcher.sh"
-TRUST_AUTOSTART="/etc/skel/.config/autostart/mse-trust-launcher.desktop"
+echo "==> [4/4] Installing trust launcher..."
+# Dock favorites are configured by 91-mse_dock.chroot.
 
-mkdir -p /usr/local/bin
-mkdir -p /etc/skel/.config/autostart
+# --- Trust-launcher script: marks both .desktop files trusted at login ---
+mkdir -p /usr/local/bin /etc/skel/.config/autostart
 
 cat > "${TRUST_SCRIPT}" << 'EOF'
 #!/bin/sh
 # mse-trust-launcher.sh
-# Marks the MSE exam browser desktop launcher as trusted so GNOME
-# launches it directly without an "Allow Executing" dialog.
-# Called at GNOME session start via XDG autostart in skel.
-# The autostart entry removes itself after first run; this script stays.
+# Marks the MSE desktop launchers as trusted so GNOME launches them
+# without an "Allow Executing" dialog. Runs once at first GNOME session
+# start via XDG autostart, then removes its own autostart entry.
 #
-# GNOME uses GVfs metadata (not filesystem xattrs) to track whether
-# a .desktop file on the Desktop is trusted. The correct mechanism is:
-#   gio set FILE metadata::trusted true   (sets trusted flag)
-#   gio set FILE unix::mode 0755          (sets access::can-execute)
-# Both are required — trusted alone is not sufficient in all GNOME versions.
+# GNOME uses GVfs metadata (not filesystem xattrs) for desktop-file trust:
+#   gio set FILE metadata::trusted true
+#   gio set FILE unix::mode 0755
 
-LAUNCHER="${HOME}/Desktop/mse-exam-browser.desktop"
 SELF_AUTOSTART="${HOME}/.config/autostart/mse-trust-launcher.desktop"
 
-if [ -f "${LAUNCHER}" ]; then
-    # Set GVfs trusted metadata flag
-    gio set "${LAUNCHER}" metadata::trusted true
-    # Set executable mode via GVfs — sets access::can-execute in GNOME
-    gio set "${LAUNCHER}" unix::mode 0755
-    # Also set filesystem execute bit as belt-and-suspenders
-    chmod +x "${LAUNCHER}"
-fi
+for LAUNCHER in \
+    "${HOME}/Desktop/mse-moodle.desktop" \
+    "${HOME}/Desktop/mse-filedrop.desktop"; do
+    if [ -f "${LAUNCHER}" ]; then
+        gio set "${LAUNCHER}" metadata::trusted true 2>/dev/null || true
+        gio set "${LAUNCHER}" unix::mode 0755 2>/dev/null || true
+        chmod +x "${LAUNCHER}" 2>/dev/null || true
+    fi
+done
 
 # Remove only the autostart entry — script stays in /usr/local/bin/
 rm -f "${SELF_AUTOSTART}"
@@ -382,19 +323,17 @@ EOF
 
 chmod 755 "${TRUST_SCRIPT}"
 
-# Exec uses the absolute global path — .desktop Exec does not expand
-# shell variables, only %field codes, so $HOME would be literal.
 cat > "${TRUST_AUTOSTART}" << 'EOF'
 [Desktop Entry]
 Type=Application
 Name=MSE Trust Launcher
-Comment=Marks MSE exam browser as trusted on first login
+Comment=Marks MSE launchers as trusted on first login
 Exec=/usr/local/bin/mse-trust-launcher.sh
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=2
 NoDisplay=true
 EOF
 
-echo "    Trust script installed: ${TRUST_SCRIPT}"
-echo "    XDG autostart entry installed: ${TRUST_AUTOSTART}"
+echo "    Trust script: ${TRUST_SCRIPT}"
+echo "    Trust autostart: ${TRUST_AUTOSTART}"
 echo "==> Firefox setup complete."
