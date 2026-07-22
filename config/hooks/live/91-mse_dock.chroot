@@ -1,0 +1,48 @@
+#!/bin/sh
+# 92-mse_dock.chroot
+#
+# Configures the GNOME dock (dash-to-dock / dash) favorites for the MSE
+# exam environment. Installs the dconf keyfile and locks file so students
+# cannot modify the dock layout.
+#
+# dconf is NOT compiled here — deferred to boot via 0500-mse-dconf
+# (installed by 93-mse_wallpaper.chroot) which runs after live-config's
+# own GNOME setup.
+#
+# Must run before 93-mse_wallpaper.chroot which writes the locks file.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+# Dock application list (order = left to right in dock)
+# Use .desktop filenames as known to GNOME
+DOCK_APPS="['mse-exam-browser.desktop', 'org.gnome.Screenshot.desktop', 'org.gnome.Nautilus.desktop']"
+
+# dconf paths
+DCONF_DIR="/etc/dconf/db/local.d"
+DCONF_LOCKS_DIR="${DCONF_DIR}/locks"
+
+# =============================================================================
+# PART 1: Write dconf dock keyfile
+# =============================================================================
+
+echo "==> [1/1] Installing GNOME dock dconf config..."
+
+mkdir -p "${DCONF_DIR}" "${DCONF_LOCKS_DIR}"
+
+cat > "${DCONF_DIR}/02-mse-dock" << DCONF_EOF
+[org/gnome/shell]
+favorite-apps=${DOCK_APPS}
+DCONF_EOF
+
+cat > "${DCONF_LOCKS_DIR}/mse-dock-locks" << 'LOCKS_EOF'
+/org/gnome/shell/favorite-apps
+LOCKS_EOF
+
+echo "    Dock config written: ${DCONF_DIR}/02-mse-dock"
+echo "    Dock lock written:   ${DCONF_LOCKS_DIR}/mse-dock-locks"
+echo "==> MSE dock configuration complete."
+echo "    dconf compilation deferred to boot via 0500-mse-dconf."

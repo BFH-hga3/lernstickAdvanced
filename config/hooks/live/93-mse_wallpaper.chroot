@@ -1,0 +1,193 @@
+#!/bin/sh
+# 93-mse_wallpaper.chroot
+#
+# Generates and installs the MSE GNOME desktop wallpaper.
+# Downloads the MSE logo from msengineering.ch, generates a 1920x1080
+# wallpaper image, installs dconf config files for wallpaper, screensaver
+# and keyboard input sources, and installs the live-config boot hook
+# that compiles the dconf database at first boot.
+#
+# dconf is NOT compiled here — live-config resets it at boot. The
+# 0500-mse-dconf live-config hook compiled by this script handles that.
+#
+# Assets requiring imagemagick and librsvg2-bin — must run before
+# 99-uninstall_packages which removes those tools.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+MSE_BG_COLOUR="#002B5C"
+MSE_ACCENT_COLOUR="#FFFFFF"
+
+LOGO_SVG_URL="https://www.msengineering.ch/_assets/0a6b389c64780974c6ce7ea1cdfa38d4/Images/Logo/mse-full-white.svg"
+
+WALLPAPER_WIDTH=1920
+WALLPAPER_HEIGHT=1080
+WALLPAPER_TEXT="Master of Science in Engineering — Exam Environment"
+
+LIVE_CONFIG_DIR="/lib/live/config"
+
+# =============================================================================
+# DERIVED PATHS — do not edit
+# =============================================================================
+
+WALLPAPER_DIR="/usr/share/backgrounds/mse"
+WALLPAPER_FILE="${WALLPAPER_DIR}/mse-wallpaper.png"
+
+DCONF_DIR="/etc/dconf/db/local.d"
+DCONF_LOCKS_DIR="${DCONF_DIR}/locks"
+DCONF_HOOK="${LIVE_CONFIG_DIR}/0500-mse-dconf"
+
+WORK_DIR="/tmp/mse-wallpaper"
+LOGO_SVG="${WORK_DIR}/mse-logo-white.svg"
+LOGO_PNG="${WORK_DIR}/mse-logo-white.png"
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+require_tool() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "ERROR: required tool '$1' not found."
+        echo "       Add the package providing '$1' to your package lists."
+        exit 1
+    fi
+}
+
+download_logo() {
+    URL="$1"; DEST="$2"; OUT="$3"
+    echo "    Downloading: ${URL}"
+    if curl -fsSL --connect-timeout 15 --max-time 30 "${URL}" -o "${DEST}" 2>/dev/null; then
+        if rsvg-convert -w 600 -h 200 "${DEST}" -o "${OUT}" 2>/dev/null; then
+            echo "    Logo downloaded and converted."
+            return 0
+        fi
+    fi
+    echo "    WARNING: Download failed — generating fallback logo with ImageMagick."
+    convert -size 600x200 xc:"${MSE_BG_COLOUR}" \
+        -fill "${MSE_ACCENT_COLOUR}" \
+        -font DejaVu-Sans-Bold \
+        -pointsize 72 \
+        -gravity Center \
+        -annotate 0 "MSE" \
+        "${OUT}"
+    return 0
+}
+
+# =============================================================================
+# PART 0: Verify tools and prepare workspace
+# =============================================================================
+
+echo "==> [0/4] Checking tools..."
+require_tool curl
+require_tool convert       # imagemagick
+require_tool rsvg-convert  # librsvg2-bin
+
+mkdir -p "${WORK_DIR}" "${WALLPAPER_DIR}" "${DCONF_DIR}" "${DCONF_LOCKS_DIR}"
+
+# =============================================================================
+# PART 1: Download MSE logo
+# =============================================================================
+
+echo "==> [1/4] Downloading MSE logo..."
+download_logo "${LOGO_SVG_URL}" "${LOGO_SVG}" "${LOGO_PNG}"
+
+# =============================================================================
+# PART 2: Generate GNOME wallpaper
+# =============================================================================
+
+echo "==> [2/4] Generating GNOME wallpaper (${WALLPAPER_WIDTH}x${WALLPAPER_HEIGHT})..."
+
+convert \
+    -size "${WALLPAPER_WIDTH}x${WALLPAPER_HEIGHT}" \
+    xc:"${MSE_BG_COLOUR}" \
+    \( "${LOGO_PNG}" -resize 500x167 \) \
+    -gravity Center \
+    -composite \
+    -fill "${MSE_ACCENT_COLOUR}" \
+    -font DejaVu-Sans \
+    -pointsize 24 \
+    -gravity South \
+    -annotate +0+60 "${WALLPAPER_TEXT}" \
+    "${WALLPAPER_FILE}"
+
+echo "    Wallpaper: ${WALLPAPER_FILE}"
+
+# =============================================================================
+# PART 3: Install dconf config files
+# Wallpaper, screensaver, keyboard input sources.
+# Also includes lock file covering dock (set by 92-mse_dock.chroot) and
+# wallpaper settings so they are all compiled together by 0500-mse-dconf.
+# =============================================================================
+
+echo "==> [3/4] Installing dconf config files..."
+
+cat > "${DCONF_DIR}/01-mse-wallpaper" << DCONF_EOF
+[org/gnome/desktop/background]
+picture-uri='file://${WALLPAPER_FILE}'
+picture-uri-dark='file://${WALLPAPER_FILE}'
+picture-options='zoom'
+primary-color='${MSE_BG_COLOUR}'
+secondary-color='${MSE_BG_COLOUR}'
+
+[org/gnome/desktop/screensaver]
+picture-uri='file://${WALLPAPER_FILE}'
+primary-color='${MSE_BG_COLOUR}'
+
+[org/gnome/desktop/input-sources]
+sources=[('xkb', 'ch+de'), ('xkb', 'ch+fr'), ('xkb', 'it'), ('xkb', 'us')]
+current=uint32 0
+mru-sources=[('xkb', 'ch+de'), ('xkb', 'ch+fr'), ('xkb', 'it'), ('xkb', 'us')]
+DCONF_EOF
+
+cat > "${DCONF_LOCKS_DIR}/mse-locks" << 'LOCKS_EOF'
+/org/gnome/desktop/background/picture-uri
+/org/gnome/desktop/background/picture-uri-dark
+/org/gnome/desktop/background/picture-options
+/org/gnome/desktop/screensaver/picture-uri
+/org/gnome/shell/favorite-apps
+/org/gnome/desktop/input-sources/sources
+/org/gnome/desktop/input-sources/current
+LOCKS_EOF
+
+echo "    dconf keyfile: ${DCONF_DIR}/01-mse-wallpaper"
+echo "    dconf locks:   ${DCONF_LOCKS_DIR}/mse-locks"
+
+# =============================================================================
+# PART 4: Install live-config boot hook to compile dconf at first boot
+# =============================================================================
+
+echo "==> [4/4] Installing live-config dconf boot hook..."
+
+mkdir -p "${LIVE_CONFIG_DIR}"
+
+cat > "${DCONF_HOOK}" << 'HOOK_EOF'
+#!/bin/sh
+# 0500-mse-dconf — live-config hook
+# Compiles all MSE dconf databases at boot, after live-config has completed
+# its own GNOME initialisation. Covers wallpaper, dock, keyboard, locks.
+# Installed by: 93-mse_wallpaper.chroot
+
+STAMP="/var/lib/live/config/0500-mse-dconf"
+[ -e "${STAMP}" ] && exit 0
+
+echo "MSE: compiling dconf database..."
+dconf update
+echo "MSE: dconf compiled."
+
+mkdir -p /var/lib/live/config
+touch "${STAMP}"
+HOOK_EOF
+
+chmod 755 "${DCONF_HOOK}"
+echo "    live-config hook installed: ${DCONF_HOOK}"
+
+# =============================================================================
+# CLEANUP
+# =============================================================================
+
+rm -rf "${WORK_DIR}"
+echo "==> MSE wallpaper configuration complete."

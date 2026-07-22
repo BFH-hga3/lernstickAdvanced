@@ -86,8 +86,9 @@ apt-get purge -y gnome-software
 
 # =============================================================================
 # Build-time tools — used by hooks, not needed in the live image
-#   whois      → 88-mse_setup_users (mkpasswd for yescrypt hashing)
-#   imagemagick, librsvg2-bin → 93-mse_branding (logo/wallpaper generation)
+#   whois         → mkpasswd now runs on host (not in chroot)
+#   imagemagick   → 93-mse_wallpaper, 94-mse_bootlogo (wallpaper/GRUB generation)
+#   librsvg2-bin  → 93-mse_wallpaper, 94-mse_bootlogo (SVG to PNG conversion)
 # =============================================================================
 
 echo "==> [6/6] Purging build-time tools..."

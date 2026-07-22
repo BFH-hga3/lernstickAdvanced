@@ -322,7 +322,7 @@ mkdir -p "${DCONF_LOCKS_DIR}"
 
 cat > "${DCONF_DOCK_FILE}" << EOF
 [org/gnome/shell]
-favorite-apps=['mse-exam-browser.desktop', 'org.gnome.Nautilus.desktop']
+favorite-apps=['mse-exam-browser.desktop', 'org.gnome.Screenshot.desktop', 'org.gnome.Nautilus.desktop']
 EOF
 
 cat >> "${DCONF_LOCKS_DIR}/mse-wallpaper-locks" << EOF
@@ -341,15 +341,13 @@ echo "    GNOME dock configured: ${DCONF_DOCK_FILE}"
 # GNOME requires .desktop files on the Desktop to carry a user.trusted
 # extended attribute to be launchable without an "Allow Executing" dialog.
 # xattrs are not preserved when skel is copied to /home/user/ at login.
-# A live-config boot hook runs too early (before Desktop is populated).
-# The correct fix is an XDG autostart script that runs at GNOME session
-# start — at which point Desktop/ is fully populated and xattrs can be set.
-# The script deletes itself after first run so it only executes once.
+# The script lives in /usr/local/bin/ (global, permanent, no home clutter).
+# The autostart .desktop in skel removes only itself after first run.
 
-TRUST_SCRIPT="/etc/skel/.local/bin/mse-trust-launcher.sh"
+TRUST_SCRIPT="/usr/local/bin/mse-trust-launcher.sh"
 TRUST_AUTOSTART="/etc/skel/.config/autostart/mse-trust-launcher.desktop"
 
-mkdir -p /etc/skel/.local/bin
+mkdir -p /usr/local/bin
 mkdir -p /etc/skel/.config/autostart
 
 cat > "${TRUST_SCRIPT}" << 'EOF'
@@ -357,39 +355,46 @@ cat > "${TRUST_SCRIPT}" << 'EOF'
 # mse-trust-launcher.sh
 # Marks the MSE exam browser desktop launcher as trusted so GNOME
 # launches it directly without an "Allow Executing" dialog.
-# Runs once at first GNOME session start via XDG autostart.
-# Removes itself after running so it never appears again.
+# Called at GNOME session start via XDG autostart in skel.
+# The autostart entry removes itself after first run; this script stays.
+#
+# GNOME uses GVfs metadata (not filesystem xattrs) to track whether
+# a .desktop file on the Desktop is trusted. The correct mechanism is:
+#   gio set FILE metadata::trusted true   (sets trusted flag)
+#   gio set FILE unix::mode 0755          (sets access::can-execute)
+# Both are required — trusted alone is not sufficient in all GNOME versions.
 
 LAUNCHER="${HOME}/Desktop/mse-exam-browser.desktop"
 SELF_AUTOSTART="${HOME}/.config/autostart/mse-trust-launcher.desktop"
-SELF_SCRIPT="${HOME}/.local/bin/mse-trust-launcher.sh"
 
-# Set the trusted xattr — tells GNOME Nautilus this file is safe to execute
 if [ -f "${LAUNCHER}" ]; then
-    if command -v attr >/dev/null 2>&1; then
-        attr -s trusted -V "" "${LAUNCHER}"
-    elif command -v setfattr >/dev/null 2>&1; then
-        setfattr -n user.trusted -v "" "${LAUNCHER}"
-    fi
+    # Set GVfs trusted metadata flag
+    gio set "${LAUNCHER}" metadata::trusted true
+    # Set executable mode via GVfs — sets access::can-execute in GNOME
+    gio set "${LAUNCHER}" unix::mode 0755
+    # Also set filesystem execute bit as belt-and-suspenders
+    chmod +x "${LAUNCHER}"
 fi
 
-# Self-destruct: remove autostart entry and script after first run
+# Remove only the autostart entry — script stays in /usr/local/bin/
 rm -f "${SELF_AUTOSTART}"
-rm -f "${SELF_SCRIPT}"
 EOF
 
 chmod 755 "${TRUST_SCRIPT}"
 
+# Exec uses the absolute global path — .desktop Exec does not expand
+# shell variables, only %field codes, so $HOME would be literal.
 cat > "${TRUST_AUTOSTART}" << 'EOF'
 [Desktop Entry]
 Type=Application
 Name=MSE Trust Launcher
 Comment=Marks MSE exam browser as trusted on first login
-Exec=/bin/sh -c '${HOME}/.local/bin/mse-trust-launcher.sh'
+Exec=/usr/local/bin/mse-trust-launcher.sh
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=2
 NoDisplay=true
 EOF
 
-echo "    XDG autostart trust script installed: ${TRUST_AUTOSTART}"
+echo "    Trust script installed: ${TRUST_SCRIPT}"
+echo "    XDG autostart entry installed: ${TRUST_AUTOSTART}"
 echo "==> Firefox setup complete."
