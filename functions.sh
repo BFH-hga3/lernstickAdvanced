@@ -82,7 +82,7 @@ build_image()
 	# GRUB
 	GRUB_THEME_DIR="config/includes.binary/boot/grub/themes/lernstick"
 	cp templates/theme.txt ${GRUB_THEME_DIR}
-	sed -i "s|title-text.*|title-text: \"Lernstick-Prüfungsumgebung Debian 13 (Version ${TODAY})\"|1" \
+	sed -i "s|title-text.*|title-text: \"MSE Lernstick: Exam Viewing Session -- Debian 13 (Version ${TODAY})\"|1" \
 		${GRUB_THEME_DIR}/theme.txt
 
 	# Generate password hashes on the host BEFORE entering the chroot.
