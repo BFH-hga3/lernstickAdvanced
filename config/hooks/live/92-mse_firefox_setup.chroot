@@ -279,10 +279,11 @@ EOF
 echo "    Launcher: ${LAUNCHER_FILEDROP}"
 
 # --- Symlink both into skel Desktop ---
-mkdir -p "$(dirname ${LAUNCHER_MOODLE_SKEL})"
-ln -sf "${LAUNCHER_MOODLE}"   "${LAUNCHER_MOODLE_SKEL}"
-ln -sf "${LAUNCHER_FILEDROP}" "${LAUNCHER_FILEDROP_SKEL}"
-echo "    Desktop symlinks created for both launchers."
+## hga3 remove
+#mkdir -p "$(dirname ${LAUNCHER_MOODLE_SKEL})"
+#ln -sf "${LAUNCHER_MOODLE}"   "${LAUNCHER_MOODLE_SKEL}"
+#ln -sf "${LAUNCHER_FILEDROP}" "${LAUNCHER_FILEDROP_SKEL}"
+#echo "    Desktop symlinks created for both launchers."
 
 # =============================================================================
 # PART 4: Trust-launcher autostart

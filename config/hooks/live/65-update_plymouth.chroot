@@ -2,6 +2,10 @@
 # 65-update_plymouth.chroot
 # Sets the Lernstick Plymouth boot theme. Must run after plymouth is installed.
 
+## hga3: ToDo set MSE background via this procedure
+
+exit 0
+
 if command -v plymouth-set-default-theme > /dev/null; then
     plymouth-set-default-theme -R homeworld-lernstick
 else

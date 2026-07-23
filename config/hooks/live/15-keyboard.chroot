@@ -13,6 +13,8 @@
 # The keysym exists in the layout definition but not in the installed libx11
 # keysym table — cosmetic only, all keys work correctly.
 
+exit 0
+
 set -e
 
 # =============================================================================
