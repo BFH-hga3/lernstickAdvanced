@@ -1,0 +1,83 @@
+# =====================================================================
+#  MSE — Master of Science in Engineering  |  GRUB2 Theme
+#  msengineering.ch
+# =====================================================================
+
+# ---- Global -----------------------------------------------------------
+title-text: ""
+desktop-image: "background.png"
+desktop-color: "#0A1A2F"
+
+terminal-font: "DejaVu Sans Mono 16"
+terminal-box:  "terminal_box_*.png"
+terminal-left: "8%"
+terminal-top:  "12%"
+terminal-width:  "84%"
+terminal-height: "76%"
+
+# ---- Brand logo (top banner) -----------------------------------------
++ image {
+    id       = "__timeout__banner"
+    file     = "logo.png"
+    left     = 50%-180
+    top      = 8%
+    width    = 360
+    height   = 150
+}
+
+# ---- Boot menu -------------------------------------------------------
++ boot_menu {
+    left   = 20%
+    top    = 34%
+    width  = 60%
+    height = 46%
+
+    item_font          = "DejaVu Sans Regular 24"
+    item_color         = "#8FA3BF"
+    selected_item_font = "DejaVu Sans Regular 24"
+    selected_item_color= "#FFFFFF"
+
+    item_height   = 56
+    item_padding  = 10
+    item_spacing  = 8
+    icon_width    = 40
+    icon_height   = 40
+    item_icon_space = 18
+
+    selected_item_pixmap_style = "select_*.png"
+
+    scrollbar        = true
+    scrollbar_width  = 14
+    scrollbar_thumb  = "select_c.png"
+}
+
+# ---- Countdown / progress bar ----------------------------------------
++ progress_bar {
+    id       = "__timeout__"
+    left     = 20%
+    top      = 84%
+    width    = 60%
+    height   = 24
+
+    bg_color   = "#12294A"
+    fg_color   = "#0F62FE"
+    border_color = "#3DB8E8"
+    text_color = "#8FA3BF"
+    text_font  = "DejaVu Sans Regular 18"
+
+    bar_style       = "progress_bar_bg.png"
+    highlight_style = "progress_highlight.png"
+
+    text = "Booting in %d s   —   press any key to choose"
+}
+
+# ---- Footer hint -----------------------------------------------------
++ label {
+    top   = 92%
+    left  = 0
+    width = 100%
+    align = center
+    color = "#8FA3BF"
+    font  = "DejaVu Sans Regular 18"
+    text  = "↑/↓ select    ↵ boot    e edit    c command line"
+}

@@ -1,5 +1,8 @@
 amd64-microcode
+intel-microcode
 atmel-firmware
+firmware-intel-graphics
+firmware-nvidia-graphics
 firmware-amd-graphics
 firmware-atheros
 firmware-bnx2
@@ -24,7 +27,6 @@ firmware-siano
 firmware-sof-signed
 firmware-ti-connectivity
 firmware-zd1211
-intel-microcode
 libcuda1=550.163.01-4~bpo13+1
 libegl-nvidia0=550.163.01-4~bpo13+1
 libgl1-nvidia-glvnd-glx=550.163.01-4~bpo13+1

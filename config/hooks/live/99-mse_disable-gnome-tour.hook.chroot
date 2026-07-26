@@ -39,4 +39,4 @@ cat > /etc/dconf/db/local.d/00-no-welcome <<EOF
 welcome-dialog-last-shown-version='999'
 EOF
 
-dconf updat
+dconf update

@@ -80,11 +80,16 @@ build_image()
 	gfxboot --archive ${BOOTLOGO_DIR} --pack-archive ${BOOTLOGO}
 	cp ${BOOTLOGO} ${BOOTLOGO}.orig
 	# GRUB
-	GRUB_THEME_DIR="config/includes.binary/boot/grub/themes/lernstick"
-	cp templates/theme.txt ${GRUB_THEME_DIR}
-	sed -i "s|title-text.*|title-text: \"MSE Lernstick: Exam Viewing Session -- Debian 13 (Version ${TODAY})\"|1" \
+	GRUB_THEME_DIR="config/includes.binary/boot/grub/themes/mse"
+	#cp templates/theme.txt ${GRUB_THEME_DIR}
+	if [ -e  ${GRUB_THEME_DIR}/theme.txt ]; then
+		sed -i "s|title-text.*|title-text: \"MSE Lernstick: Exam Viewing Session -- Debian 13 (Version ${TODAY})\"|1" \
 		${GRUB_THEME_DIR}/theme.txt
-
+		echo "[INFO] : Added date and ID string to GRUB title"
+	else
+		echo "[ERROR] : No file 'theme.txt' exists in ${GRUB_THEME_DIR}"
+		exit 0
+	fi
 	# Generate password hashes on the host BEFORE entering the chroot.
 	# chroot hooks cannot access host environment variables, so we
 	# pre-generate yescrypt hashes here and place them in
