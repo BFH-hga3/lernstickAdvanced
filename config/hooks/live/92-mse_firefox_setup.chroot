@@ -357,6 +357,12 @@ Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 EOF
+
+## Make it executable
+if [ -e "${LAUNCHER_MOODLE}" ]; then
+  chmod 755 "${LAUNCHER_MOODLE}"
+fi
+
 echo "I:   Launcher: ${LAUNCHER_MOODLE}"
 
 # --- FileDrop launcher ---
@@ -372,6 +378,12 @@ Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 EOF
+
+## Make it executable
+if [ -e "${LAUNCHER_FILEDROP}" ]; then
+  chmod 755 "${LAUNCHER_FILEDROP}"
+fi
+
 echo "I:   Launcher: ${LAUNCHER_FILEDROP}"
 
 # --- Symlink both into skel Desktop ---
