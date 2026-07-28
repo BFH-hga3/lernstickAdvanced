@@ -19,3 +19,26 @@ export MIRROR_SECURITY_SYSTEM="http://security.debian.org/"
 ## Minimum 8 characters required — build will fail loudly if unset
 #export MSE_USER_PASSWORD="change-me-before-building"
 #export MSE_ADMIN_PASSWORD="change-me-before-building"
+#
+# ---------------------------------------------------------------------------
+# Boot theme selection
+# ---------------------------------------------------------------------------
+# Selects which theme under themes/<name>/ is staged into the build.
+# Each theme provides BOTH bootloader halves:
+#   themes/<THEME>/gfxboot/   (BIOS / ISOLINUX, packed into bootlogo)
+#   themes/<THEME>/grub/      (UEFI / GRUB2 theme directory)
+#
+# Switching identity is a one-line change here; lernstick and mse coexist as
+# sibling directories with no shared mutable state.
+THEME="lernstick"                 # or "mse"
+
+# Title text stamped into the GRUB theme.txt (build date is appended
+# automatically). Optional; a sensible 'lernstick' default is used if unset.
+THEME_TITLE="Lernstick: Exam Version -- Debian 13"
+
+# Name of the theme folder GRUB references at boot, under
+# config/includes.binary/boot/grub/themes/. Optional; defaults to ${THEME}.
+# Only override if your GRUB boot config hardcodes a fixed folder name that
+# must stay constant across themes.
+#GRUB_THEME_NAME="lernstick"
+

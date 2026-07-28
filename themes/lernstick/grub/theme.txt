@@ -1,0 +1,36 @@
+title-text: "Lernstick-Prüfungsumgebung Debian 12 (Version YYYY-MM-DD)"
+desktop-image: "lernstick-splash-1280x800.png"
+
++ boot_menu {
+  left = 19%
+  top = 30%
+  width = 58%
+  height = 60%
+  selected_item_color = "#FFFFFF"
+  item_height = 20
+  item_padding = 0
+  item_spacing = 5
+  icon_width = 16
+  icon_height = 16
+  icon_spacing = 20
+  selected_item_pixmap_style = "highlight_*.png"
+  menu_pixmap_style = "menu_*.png"
+ 
+  scrollbar = true
+  scrollbar_thumb = "sb_thumb_*.png"
+  scrollbar_frame = "sb_frame_*.png"
+  scrollbar_width = 16
+}
+
++ circular_progress {
+  id = "__timeout__"
+  left = 19%-120
+  top = 30%
+  width = 95
+  height = 95
+  num_ticks = 10
+  start_angle = -56
+  ticks_disappear = true
+  center_bitmap = "clock.png"
+  tick_bitmap = "tick.png"
+}

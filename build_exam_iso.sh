@@ -6,6 +6,9 @@ ISO_PREFIX="MSE"
 ISO_SUFFIX="vs"
 SOURCE="false"
 
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+export REPO_ROOT
+
 . ./functions.sh
 check_and_source_constants
 

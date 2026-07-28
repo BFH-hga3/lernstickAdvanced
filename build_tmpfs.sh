@@ -50,4 +50,4 @@ PWD="$(pwd)"
 
 cp -a "${PWD}/config" "${TMPFS_IMAGE_MOUNT}"
 ln -s "${PWD}/cache" "${TMPFS_IMAGE_MOUNT}"
-ln -s "${PWD}/templates" "${TMPFS_IMAGE_MOUNT}"
+ln -s "${PWD}/themes" "${TMPFS_IMAGE_MOUNT}"

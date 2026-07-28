@@ -5,7 +5,7 @@ check_and_source_constants()
 		. ./constants
 	else
 		echo "Please copy the file \"constants.example\" to \"constants\" and adopt the settings to your build environment."
-		exit
+		exit 1
 	fi
 }
 
@@ -68,33 +68,127 @@ cache_cleanup()
 	done
 }
 
-build_image()
+# ---------------------------------------------------------------------------
+# stage_theme()
+#
+# Stages the selected boot theme (both the gfxboot/BIOS half and the
+# GRUB2/UEFI half) from a canonical, version-controlled source directory
+# into the live-build tree, then stamps the build date into each.
+#
+# The theme is selected in the constants file:
+#   THEME="mse"                 # or "lernstick", or any themes/<name>
+#   THEME_TITLE="MSE Lernstick: Exam Viewing Session -- Debian 13"
+#   GRUB_THEME_NAME="mse"       # optional; defaults to ${THEME}
+#
+# Expected on-disk layout (outside the lb-managed config/ tree):
+#   themes/<name>/gfxboot/   -> becomes bootlogo.dir  (xmlboot.config, splash_*,
+#                               icon_*, font_size_*.fnt, *.translation)
+#   themes/<name>/grub/      -> becomes GRUB themes/<GRUB_THEME_NAME>/
+#                               (theme.txt, background.png, *.pf2, ...)
+#
+# Both halves are fully reconstructed from source on every build, so no theme
+# state is left lingering in the lb-managed config/ tree between runs.
+# ---------------------------------------------------------------------------
+stage_theme()
 {
-	# update time stamp in bootloaders
-	# ISOLINUX/SYSLINUX
+	# --- resolve and validate configuration ---------------------------------
+	: "${THEME:?THEME not set in constants (e.g. THEME=\"lernstick\")}"
+	#THEME_DIR="${REPO_ROOT:-.}/themes/${THEME}"
+	THEME_DIR="themes/${THEME}" ## this works due to `ln -s` in run_cleanup
+	# GRUB folder name defaults to the theme name unless overridden.
+	GRUB_THEME_NAME="${GRUB_THEME_NAME:-${THEME}}"
+
+	if [ ! -d "${THEME_DIR}" ]; then
+		echo "[ERROR] Theme directory '${THEME_DIR}' does not exist."
+		echo "        Set THEME in constants to a valid themes/<name> directory."
+		exit 1
+	fi
+	if [ ! -d "${THEME_DIR}/gfxboot" ]; then
+		echo "[ERROR] Missing gfxboot assets: '${THEME_DIR}/gfxboot'."
+		exit 1
+	fi
+	if [ ! -d "${THEME_DIR}/grub" ]; then
+		echo "[ERROR] Missing GRUB assets: '${THEME_DIR}/grub'."
+		exit 1
+	fi
+
+	echo "[INFO] Staging theme '${THEME}' from ${THEME_DIR}"
+
+	# --- gfxboot (BIOS / ISOLINUX) ------------------------------------------
 	BOOTLOGO="config/bootloaders/isolinux/bootlogo"
 	BOOTLOGO_DIR="${BOOTLOGO}.dir"
-	cp templates/xmlboot.config ${BOOTLOGO_DIR}
-	sed -i "s|<version its:translate=\"no\">.*</version>|<version its:translate=\"no\">(Version ${TODAY})</version>|1" \
-		${BOOTLOGO_DIR}/xmlboot.config
-	gfxboot --archive ${BOOTLOGO_DIR} --pack-archive ${BOOTLOGO}
-	cp ${BOOTLOGO} ${BOOTLOGO}.orig
-	# GRUB
-	GRUB_THEME_DIR="config/includes.binary/boot/grub/themes/mse"
-	#cp templates/theme.txt ${GRUB_THEME_DIR}
-	if [ -e  ${GRUB_THEME_DIR}/theme.txt ]; then
-		sed -i "s|title-text.*|title-text: \"MSE Lernstick: Exam Viewing Session -- Debian 13 (Version ${TODAY})\"|1" \
-		${GRUB_THEME_DIR}/theme.txt
-		echo "[INFO] : Added date and ID string to GRUB title"
-	else
-		echo "[ERROR] : No file 'theme.txt' exists in ${GRUB_THEME_DIR}"
-		exit 0
+
+	if ! command -v gfxboot >/dev/null 2>&1; then
+		echo "[ERROR] gfxboot not found on build host. Run: apt install gfxboot gfxboot-dev"
+		exit 1
 	fi
-	# Generate password hashes on the host BEFORE entering the chroot.
-	# chroot hooks cannot access host environment variables, so we
-	# pre-generate yescrypt hashes here and place them in
-	# includes.chroot_before_packages where the chroot hook can read them.
-	# Requires: whois (mkpasswd) installed on the BUILD HOST.
+
+	# Reconstruct bootlogo.dir entirely from the theme source.
+	rm -rf "${BOOTLOGO_DIR}"
+	mkdir -p "${BOOTLOGO_DIR}"
+	cp -a "${THEME_DIR}/gfxboot/." "${BOOTLOGO_DIR}/"
+
+	if [ ! -e "${BOOTLOGO_DIR}/xmlboot.config" ]; then
+		echo "[ERROR] No xmlboot.config in ${THEME_DIR}/gfxboot"
+		exit 1
+	fi
+
+	# Stamp the build date into the version string, then pack the archive.
+	sed -i "s|<version its:translate=\"no\">.*</version>|<version its:translate=\"no\">(Version ${TODAY})</version>|1" \
+		"${BOOTLOGO_DIR}/xmlboot.config"
+	gfxboot --archive "${BOOTLOGO_DIR}" --pack-archive "${BOOTLOGO}"
+	cp "${BOOTLOGO}" "${BOOTLOGO}.orig" ## TODO: remove in order to clean up and shrink image
+	echo "[INFO] Packed gfxboot bootlogo for theme '${THEME}'"
+
+	# --- GRUB2 (UEFI) -------------------------------------------------------
+	GRUB_THEME_DIR="config/includes.binary/boot/grub/themes/${GRUB_THEME_NAME}"
+
+	# Reconstruct the GRUB theme directory entirely from the theme source.
+	rm -rf "${GRUB_THEME_DIR}"
+	mkdir -p "${GRUB_THEME_DIR}"
+	cp -a "${THEME_DIR}/grub/." "${GRUB_THEME_DIR}/"
+
+	if [ -e "${GRUB_THEME_DIR}/theme.txt" ]; then
+		# Title text is theme-specific; take it from constants with a fallback.
+		_grub_title="${THEME_TITLE:-Lernstick: Exam Version -- Debian 13}"
+		sed -i "s|title-text.*|title-text: \"${_grub_title} (Version ${TODAY})\"|1" \
+			"${GRUB_THEME_DIR}/theme.txt"
+		echo "[INFO] Added date and ID string to GRUB title"
+	else
+		echo "[ERROR] No file 'theme.txt' exists in ${GRUB_THEME_DIR}"
+		exit 1
+	fi
+       
+
+	# Substitute the theme name into the GRUB config (build-time, declarative).
+	# Template line in the source grub.cfg:
+	#   set theme="/boot/grub/themes/@GRUB_THEME_NAME@/theme.txt"
+	GRUB_CFG="config/includes.binary/boot/grub/grub.cfg"
+	if [ -e "${GRUB_CFG}" ]; then
+		sed -i "s|@GRUB_THEME_NAME@|${GRUB_THEME_NAME}|g" "${GRUB_CFG}"
+		# Fail loudly if a placeholder slipped through unsubstituted.
+		if grep -q '@GRUB_THEME_NAME@' "${GRUB_CFG}"; then
+			echo "[ERROR] Unsubstituted @GRUB_THEME_NAME@ remains in ${GRUB_CFG}"
+			exit 1
+		fi
+		echo "[INFO] Set GRUB theme path to themes/${GRUB_THEME_NAME}"
+	else
+		echo "[ERROR] GRUB config not found: ${GRUB_CFG}"
+		exit 1
+	fi
+
+}
+
+# ---------------------------------------------------------------------------
+# generate_password_hashes()
+#
+# Generates yescrypt password hashes on the BUILD HOST before the chroot is
+# entered. chroot hooks cannot read host environment variables, so the hashes
+# are written into includes.chroot_before_packages where a chroot hook can
+# pick them up. Requires: whois (provides mkpasswd) on the build host.
+# ---------------------------------------------------------------------------
+generate_password_hashes()
+{
 	echo "Generating MSE password hashes on host..."
 	if [ -z "${MSE_USER_PASSWORD}" ] || [ -z "${MSE_ADMIN_PASSWORD}" ]; then
 		echo "ERROR: MSE_USER_PASSWORD and/or MSE_ADMIN_PASSWORD not set in constants."
@@ -116,6 +210,16 @@ build_image()
 	chmod 600 "${MSE_HASH_DIR}/user.hash" "${MSE_HASH_DIR}/admin.hash"
 	echo "    Hash written: ${MSE_HASH_DIR}/user.hash"
 	echo "    Hash written: ${MSE_HASH_DIR}/admin.hash"
+}
+
+build_image()
+{
+	# Stage the selected boot theme (gfxboot + GRUB) from themes/<name>/ and
+	# stamp the build date into both halves.
+	stage_theme
+
+	# Generate password hashes on the host before entering the chroot.
+	generate_password_hashes
 
 	# update configuration
 	rm -f config/binary

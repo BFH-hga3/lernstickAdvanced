@@ -54,18 +54,18 @@ else
 fi
 
 ## Check link to templates directory.
-if [ -L "${TMPFS_IMAGE_MOUNT}/templates" ] ; then
-   if [ -e "${TMPFS_IMAGE_MOUNT}/templates" ] ; then
-      echo "[INFO] : The link to '${TMPFS_IMAGE_MOUNT}/templates' -> '${PWD}/templates' already exists."
+if [ -L "${TMPFS_IMAGE_MOUNT}/themes" ] ; then
+   if [ -e "${TMPFS_IMAGE_MOUNT}/themes" ] ; then
+      echo "[INFO] : The link to '${TMPFS_IMAGE_MOUNT}/themes' -> '${PWD}/themes' already exists."
    else
-      echo "[ERROR] : The link to '${TMPFS_IMAGE_MOUNT}/templates' is a broken link."
+      echo "[ERROR] : The link to '${TMPFS_IMAGE_MOUNT}/themes' is a broken link."
       exit 1
    fi
-elif [ -e "${TMPFS_IMAGE_MOUNT}/templates" ] ; then
-   echo "[WARNING] : The link to '${TMPFS_IMAGE_MOUNT}/templates' is not a link."
+elif [ -e "${TMPFS_IMAGE_MOUNT}/themes" ] ; then
+   echo "[WARNING] : The link to '${TMPFS_IMAGE_MOUNT}/themes' is not a link."
 else
-   echo "[INFO] : Creating proper '${TMPFS_IMAGE_MOUNT}/templates' -> '${PWD}/templates' link."
-   ln -s "${PWD}/templates" "${TMPFS_IMAGE_MOUNT}"
+   echo "[INFO] : Creating proper '${TMPFS_IMAGE_MOUNT}/themes' -> '${PWD}/themes' link."
+   ln -s "${PWD}/themes" "${TMPFS_IMAGE_MOUNT}"
 fi
 
 
