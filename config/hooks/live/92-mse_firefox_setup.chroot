@@ -28,6 +28,13 @@ set -e
 # CONFIGURATION — edit here only
 # =============================================================================
 
+# Filesystem root prefix.
+# Production: empty "" → paths resolve to the real root (/usr, /etc, ...).
+# Local testing: set to e.g. "/tmp/test" to write the whole tree under there
+# without touching the real system. Override via environment if desired:
+#   FS_ROOT_DIR=/tmp/test ./92-mse_firefox_setup.chroot
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
+
 LIVE_USER="user"
 FF_PROFILE_NAME="exam.default"
 
@@ -35,42 +42,56 @@ FF_PROFILE_NAME="exam.default"
 URL_MOODLE="https://moodle.msengineering.ch"
 URL_FILEDROP="https://drive.switch.ch/index.php/s/NnNaOgN4lHaqe2M"
 
-# Icon source URLs — fetched at build time from the services themselves.
-# Favicons live at the site root; we convert them to PNG for the launchers.
-ICON_MOODLE_URL="https://moodle.msengineering.ch/favicon.ico"
-ICON_FILEDROP_URL="https://drive.switch.ch/favicon.ico"
+# Icon source URLs — single-file SWITCHdrive shares. The share URL returns an
+# HTML page; appending /download returns the raw image file for conversion.
+ICON_MOODLE_URL="https://drive.switch.ch/index.php/s/F402QruRE0k87Kt/download"
+ICON_FILEDROP_URL="https://drive.switch.ch/index.php/s/wKIi9UmF6aYdkeU/download"
 
-# Installed icon paths (hicolor theme, 128x128)
-ICON_DIR="/usr/share/icons/hicolor/128x128/apps"
+# Installed icon paths (hicolor icon theme, 128x128 apps)
+ICON_DIR="${FS_ROOT_DIR}/usr/share/icons/hicolor/128x128/apps"
 ICON_MOODLE="${ICON_DIR}/mse-moodle.png"
 ICON_FILEDROP="${ICON_DIR}/mse-filedrop.png"
 
 # System policy paths
-POLICY_FILE="/usr/lib/firefox-esr/distribution/policies.json"
-POLICY_LINK_DIR="/etc/firefox-esr/policies"
+POLICY_FILE="${FS_ROOT_DIR}/usr/lib/firefox-esr/distribution/policies.json"
+POLICY_LINK_DIR="${FS_ROOT_DIR}/etc/firefox-esr/policies"
 
 # Desktop launchers (installed in /usr/share/applications/ for GNOME trust)
-LAUNCHER_MOODLE="/usr/share/applications/mse-moodle.desktop"
-LAUNCHER_FILEDROP="/usr/share/applications/mse-filedrop.desktop"
-LAUNCHER_MOODLE_SKEL="/etc/skel/Desktop/mse-moodle.desktop"
-LAUNCHER_FILEDROP_SKEL="/etc/skel/Desktop/mse-filedrop.desktop"
+LAUNCHER_MOODLE="${FS_ROOT_DIR}/usr/share/applications/mse-moodle.desktop"
+LAUNCHER_FILEDROP="${FS_ROOT_DIR}/usr/share/applications/mse-filedrop.desktop"
+LAUNCHER_MOODLE_SKEL="${FS_ROOT_DIR}/etc/skel/Desktop/mse-moodle.desktop"
+LAUNCHER_FILEDROP_SKEL="${FS_ROOT_DIR}/etc/skel/Desktop/mse-filedrop.desktop"
 
 # Wrapper scripts (one per URL)
-SCRIPT_MOODLE="/usr/local/bin/mse-moodle.sh"
-SCRIPT_FILEDROP="/usr/local/bin/mse-filedrop.sh"
+SCRIPT_DIR="${FS_ROOT_DIR}/usr/local/bin"
+SCRIPT_MOODLE="${SCRIPT_DIR}/mse-moodle.sh"
+SCRIPT_FILEDROP="${SCRIPT_DIR}/mse-filedrop.sh"
 
 # Trust launcher (marks .desktop files trusted at first login)
-TRUST_SCRIPT="/usr/local/bin/mse-trust-launcher.sh"
-TRUST_AUTOSTART="/etc/skel/.config/autostart/mse-trust-launcher.desktop"
+TRUST_SCRIPT="${SCRIPT_DIR}/mse-trust-launcher.sh"
+TRUST_AUTOSTART_DIR="${FS_ROOT_DIR}/etc/skel/.config/autostart"
+TRUST_AUTOSTART="${TRUST_AUTOSTART_DIR}/mse-trust-launcher.desktop"
 
 # =============================================================================
 # DERIVED PATHS — computed from variables above, do not edit
 # =============================================================================
 
-FF_SKEL_DIR="/etc/skel/.mozilla/firefox"
+FF_SKEL_DIR="${FS_ROOT_DIR}/etc/skel/.mozilla/firefox"
 FF_PROFILE_DIR="${FF_SKEL_DIR}/${FF_PROFILE_NAME}"
 FF_PROFILES_INI="${FF_SKEL_DIR}/profiles.ini"
 FF_USER_JS="${FF_PROFILE_DIR}/user.js"
+
+# RUNTIME paths — always real-root, NEVER prefixed with FS_ROOT_DIR.
+# Used for values written INTO files (.desktop Icon=/Exec=, ln -sf targets),
+# because on the booted system those paths have no test prefix.
+RT_ICON_DIR="/usr/share/icons/hicolor/128x128/apps"
+RT_ICON_MOODLE="${RT_ICON_DIR}/mse-moodle.png"
+RT_ICON_FILEDROP="${RT_ICON_DIR}/mse-filedrop.png"
+RT_SCRIPT_MOODLE="/usr/local/bin/mse-moodle.sh"
+RT_SCRIPT_FILEDROP="/usr/local/bin/mse-filedrop.sh"
+RT_TRUST_SCRIPT="/usr/local/bin/mse-trust-launcher.sh"
+RT_LAUNCHER_MOODLE="/usr/share/applications/mse-moodle.desktop"
+RT_LAUNCHER_FILEDROP="/usr/share/applications/mse-filedrop.desktop"
 
 # =============================================================================
 # PART 1: System-wide Firefox enterprise policy
@@ -142,7 +163,7 @@ echo "    Written: ${POLICY_FILE}"
 
 mkdir -p "${POLICY_LINK_DIR}"
 rm -f "${POLICY_LINK_DIR}/policies.json"
-ln -s "${POLICY_FILE}" "${POLICY_LINK_DIR}/policies.json"
+ln -s "/usr/lib/firefox-esr/distribution/policies.json" "${POLICY_LINK_DIR}/policies.json"
 echo "    Symlinked: ${POLICY_LINK_DIR}/policies.json -> ${POLICY_FILE}"
 
 # =============================================================================
@@ -242,8 +263,8 @@ echo "    user.js written: ${FF_USER_JS}"
 
 echo "I: Installing Moodle and FileDrop launchers..."
 
-if [ ! -d /usr/local/bin ]; then
-    mkdir -p /usr/local/bin
+if [ ! -d "${SCRIPT_DIR}" ]; then
+    mkdir -p "${SCRIPT_DIR}"
 fi
 if [ ! -d "${ICON_DIR}" ]; then
     mkdir -p "${ICON_DIR}"
@@ -255,27 +276,21 @@ fi
 # Falls back to firefox-esr icon name if download or conversion fails.
 fetch_icon() {
     URL="$1"; OUT="$2"; NAME="$3"
-    TMP="/tmp/${NAME}.ico"
+    TMP="/tmp/${NAME}.download"
     WORK="/tmp/${NAME}-work.png"
 
     if ! curl -fsSL --connect-timeout 15 --max-time 30 "${URL}" -o "${TMP}" 2>/dev/null; then
         rm -f "${TMP}"
-        echo "    WARNING: icon download failed for ${NAME} — using firefox-esr."
+        echo "W:   Icon download failed for ${NAME} -- using firefox-esr."
         return 1
     fi
 
-    # A favicon.ico often contains multiple frames (16x16, 32x32, 48x48, ...).
-    # Converting a multi-frame ICO directly to PNG makes convert emit one
-    # numbered file PER frame (name-0.png, -1.png, ...) instead of one file.
-    # Fix: pick the single largest frame, convert only that frame into a temp
-    # working file, then copy the finished PNG into ICON_DIR explicitly.
-    BEST_INDEX=0
-    BEST_HEIGHT=0
-    INDEX=0
+    # The download may be PNG, ICO (multi-frame) or SVG. For a multi-frame ICO,
+    # pick the largest frame so convert emits exactly one output file.
+    BEST_INDEX=0; BEST_HEIGHT=0; INDEX=0
     for H in $(identify -format '%h\n' "${TMP}" 2>/dev/null); do
         if [ "${H}" -gt "${BEST_HEIGHT}" ] 2>/dev/null; then
-            BEST_HEIGHT="${H}"
-            BEST_INDEX="${INDEX}"
+            BEST_HEIGHT="${H}"; BEST_INDEX="${INDEX}"
         fi
         INDEX=$((INDEX + 1))
     done
@@ -284,30 +299,28 @@ fetch_icon() {
     if ! convert "${TMP}[${BEST_INDEX}]" -resize 128x128 -background none \
         -gravity center -extent 128x128 "${WORK}" 2>/dev/null || [ ! -f "${WORK}" ]; then
         rm -f "${TMP}" "${WORK}" "/tmp/${NAME}-work-"*.png 2>/dev/null || true
-        echo "    WARNING: icon convert failed for ${NAME} — using firefox-esr."
+        echo "W:   Icon convert failed for ${NAME} -- using firefox-esr."
         return 1
     fi
 
     # Copy the finished PNG into the icon theme directory in the fs tree.
     cp "${WORK}" "${OUT}"
     chmod 644 "${OUT}"
-
-    # Clean up temp files
     rm -f "${TMP}" "${WORK}"
 
-    echo "    Icon installed: ${OUT} (frame ${BEST_INDEX}, ${BEST_HEIGHT}px source)"
+    echo "I:   Icon installed: ${OUT} (frame ${BEST_INDEX}, ${BEST_HEIGHT}px source)"
     return 0
 }
 
 # Fetch both icons; record which succeeded so launchers use the right Icon= value
 if fetch_icon "${ICON_MOODLE_URL}" "${ICON_MOODLE}" "mse-moodle"; then
-    ICON_MOODLE_VALUE="${ICON_MOODLE}"
+    ICON_MOODLE_VALUE="${RT_ICON_MOODLE}"
 else
     ICON_MOODLE_VALUE="firefox-esr"
 fi
 
 if fetch_icon "${ICON_FILEDROP_URL}" "${ICON_FILEDROP}" "mse-filedrop"; then
-    ICON_FILEDROP_VALUE="${ICON_FILEDROP}"
+    ICON_FILEDROP_VALUE="${RT_ICON_FILEDROP}"
 else
     ICON_FILEDROP_VALUE="firefox-esr"
 fi
@@ -315,7 +328,7 @@ fi
 # --- Moodle wrapper ---
 cat > "${SCRIPT_MOODLE}" << EOF
 #!/bin/sh
-# mse-moodle.sh — opens MSE Moodle in Firefox private mode.
+# mse-moodle.sh -- opens MSE Moodle in Firefox private mode.
 exec firefox --private-window "${URL_MOODLE}"
 EOF
 chmod 755 "${SCRIPT_MOODLE}"
@@ -324,7 +337,7 @@ echo "    Wrapper: ${SCRIPT_MOODLE}"
 # --- FileDrop wrapper ---
 cat > "${SCRIPT_FILEDROP}" << EOF
 #!/bin/sh
-# mse-filedrop.sh — opens MSE FileDrop in Firefox private mode.
+# mse-filedrop.sh -- opens MSE FileDrop in Firefox private mode.
 exec firefox --private-window "${URL_FILEDROP}"
 EOF
 chmod 755 "${SCRIPT_FILEDROP}"
@@ -338,13 +351,13 @@ Version=1.0
 Type=Application
 Name=MSE Moodle
 Comment=Open MSE Moodle in Firefox (private mode)
-Exec=${SCRIPT_MOODLE}
+Exec=${RT_SCRIPT_MOODLE}
 Icon=${ICON_MOODLE_VALUE}
 Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 EOF
-echo "    Launcher: ${LAUNCHER_MOODLE}"
+echo "I:   Launcher: ${LAUNCHER_MOODLE}"
 
 # --- FileDrop launcher ---
 cat > "${LAUNCHER_FILEDROP}" << EOF
@@ -353,19 +366,19 @@ Version=1.0
 Type=Application
 Name=MSE FileDrop
 Comment=Open MSE FileDrop in Firefox (private mode)
-Exec=${SCRIPT_FILEDROP}
+Exec=${RT_SCRIPT_FILEDROP}
 Icon=${ICON_FILEDROP_VALUE}
 Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 EOF
-echo "    Launcher: ${LAUNCHER_FILEDROP}"
+echo "I:   Launcher: ${LAUNCHER_FILEDROP}"
 
 # --- Symlink both into skel Desktop ---
 mkdir -p "$(dirname ${LAUNCHER_MOODLE_SKEL})"
-ln -sf "${LAUNCHER_MOODLE}"   "${LAUNCHER_MOODLE_SKEL}"
-ln -sf "${LAUNCHER_FILEDROP}" "${LAUNCHER_FILEDROP_SKEL}"
-echo "    Desktop symlinks created for both launchers."
+ln -sf "${RT_LAUNCHER_MOODLE}"   "${LAUNCHER_MOODLE_SKEL}"
+ln -sf "${RT_LAUNCHER_FILEDROP}" "${LAUNCHER_FILEDROP_SKEL}"
+echo "I:   Desktop symlinks created for both launchers."
 
 # =============================================================================
 # PART 4: Trust-launcher autostart
@@ -375,7 +388,9 @@ echo "I: Installing trust launcher..."
 # Dock favorites are configured by 91-mse_dock.chroot.
 
 # --- Trust-launcher script: marks both .desktop files trusted at login ---
-mkdir -p /usr/local/bin /etc/skel/.config/autostart
+if [ ! -d "${TRUST_AUTOSTART_DIR}" ]; then
+   mkdir -p "${TRUST_AUTOSTART_DIR}"
+fi
 
 cat > "${TRUST_SCRIPT}" << 'EOF'
 #!/bin/sh
@@ -400,18 +415,18 @@ for LAUNCHER in \
     fi
 done
 
-# Remove only the autostart entry — script stays in /usr/local/bin/
+# Remove only the autostart entry -- script stays in /usr/local/bin
 rm -f "${SELF_AUTOSTART}"
 EOF
 
 chmod 755 "${TRUST_SCRIPT}"
 
-cat > "${TRUST_AUTOSTART}" << 'EOF'
+cat > "${TRUST_AUTOSTART}" << EOF
 [Desktop Entry]
 Type=Application
 Name=MSE Trust Launcher
 Comment=Marks MSE launchers as trusted on first login
-Exec=/usr/local/bin/mse-trust-launcher.sh
+Exec=${RT_TRUST_SCRIPT}
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=2
 NoDisplay=true
