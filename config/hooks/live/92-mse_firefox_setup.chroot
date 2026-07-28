@@ -227,13 +227,13 @@ user_pref("browser.startup.page",                      0);
 // Prevents the translation popup/offer from appearing on foreign-language pages.
 user_pref("browser.translations.enable",               false);
 user_pref("browser.translations.automaticallyPopup",   false);
-user_pref("browser.translations.panelShown",           true);
+user_pref("browser.translations.panelShown",           false);
 
 // --- Private browsing info page: fully suppressed ---
 // Firefox tries to open https://www.mozilla.org/privacy/firefox/ and the
 // private-browsing "about" page on private-window start. Both are blocked
 // by the firewall and show an error tab. These prefs prevent them opening.
-user_pref("browser.privatebrowsing.welcomeShown",      true);
+user_pref("browser.privatebrowsing.welcomeShown",      false);
 user_pref("browser.privatebrowsing.vpnpromourl",       "");
 user_pref("browser.privatebrowsing.promoEnabled",      false);
 user_pref("browser.privatebrowsing.infoEnabled",       false);
@@ -245,7 +245,7 @@ user_pref("extensions.pocket.enabled",                 false);
 // --- Telemetry & first-run noise ---
 user_pref("toolkit.telemetry.enabled",                 false);
 user_pref("browser.startup.firstrunSkipsHomepage",     true);
-user_pref("trailhead.firstrun.didSeeAboutWelcome",     true);
+user_pref("trailhead.firstrun.didSeeAboutWelcome",     false);
 user_pref("datareporting.healthreport.uploadEnabled",  false);
 user_pref("datareporting.policy.dataSubmissionEnabled", false);
 user_pref("app.shield.optoutstudies.enabled",          false);

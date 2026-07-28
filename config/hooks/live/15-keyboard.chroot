@@ -27,7 +27,7 @@ XKBMODEL="pc105"
 XKBLAYOUT="ch,ch,it,us"
 
 # Variant per layout (empty = default for that layout)
-XKBVARIANT="de,fr,,"
+XKBVARIANT=",fr,,"
 
 # Option: Alt+Shift toggles between layouts
 XKBOPTIONS="grp:alt_shift_toggle"
