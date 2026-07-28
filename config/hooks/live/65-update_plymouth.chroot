@@ -1,13 +1,172 @@
 #!/bin/sh
-# 65-update_plymouth.chroot
-# Sets the Lernstick Plymouth boot theme. Must run after plymouth is installed.
+# config/hooks/normal/0450-plymouth-mse-theme.hook.chroot
+#
+# Self-contained: installs a branded "mse" Plymouth theme.
+# - downloads the MSE logo (SVG) and converts it to PNG
+# - writes mse.plymouth and mse.script via heredocs
+# - registers via update-alternatives and activates + rebuilds initramfs
+#
+# Single concern: Plymouth boot splash branding for the MSE exam image.
+#
+# Build dependency: librsvg2-bin (rsvg-convert) or inkscape must be installed
+# in the chroot. Add "librsvg2-bin" to your package-lists.
 
-## hga3: ToDo set MSE background via this procedure
+set -e
 
-exit 0
+THEME_NAME="mse"
+THEME_DIR="/usr/share/plymouth/themes/${THEME_NAME}"
 
-if command -v plymouth-set-default-theme > /dev/null; then
-    plymouth-set-default-theme -R homeworld-lernstick
+# Replace with the real asset URL (you own the domain).
+LOGO_SVG_URL="https://www.msengineering.ch/_assets/0a6b389c64780974c6ce7ea1cdfa38d4/Images/Logo/mse.svg"
+
+# Target logo width in px (fullscreen splash; 400-600 is a good range).
+LOGO_WIDTH="500"
+
+# Recolor the logo to white for the dark splash background.
+# The MSE mark is dark-on-transparent and would be invisible otherwise.
+# Set to "no" if your asset is already light/reversed.
+RECOLOR_WHITE="yes"
+
+SVG_TMP="$(mktemp --suffix=.svg)"
+SVG_WORK="$(mktemp --suffix=.svg)"
+LOGO_PATH="${THEME_DIR}/logo.png"
+
+cleanup() { rm -f "${SVG_TMP}" "${SVG_WORK}"; }
+trap cleanup EXIT
+
+echo "P: 65-update_plymouth.chroot: installing '${THEME_NAME}' theme"
+
+mkdir -p "${THEME_DIR}"
+
+# --- fetch SVG --------------------------------------------------------------
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --retry 3 -o "${SVG_TMP}" "${LOGO_SVG_URL}"
+elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "${SVG_TMP}" "${LOGO_SVG_URL}"
 else
-    echo "INFO: plymouth-set-default-theme not found, skipping."
+    echo "E: neither curl nor wget available to fetch logo" >&2
+    exit 1
 fi
+
+if [ ! -s "${SVG_TMP}" ]; then
+    echo "E: SVG download failed or empty: ${LOGO_SVG_URL}" >&2
+    exit 1
+fi
+
+# --- optional recolor to white ----------------------------------------------
+# Naive but effective for single-colour marks: swap common black fills/strokes
+# to white. Inspect the SVG's actual colours if this doesn't catch everything:
+#   grep -oE '(fill|stroke)[:=]"?#[0-9a-fA-F]{3,6}' mse.svg | sort -u
+if [ "${RECOLOR_WHITE}" = "yes" ]; then
+    sed -e 's/#000000/#ffffff/g' \
+        -e 's/#000\b/#fff/g' \
+        -e 's/fill:#000000/fill:#ffffff/g' \
+        -e 's/fill="black"/fill="white"/g' \
+        -e 's/stroke="black"/stroke="white"/g' \
+        "${SVG_TMP}" > "${SVG_WORK}"
+else
+    cp "${SVG_TMP}" "${SVG_WORK}"
+fi
+
+# --- convert SVG -> PNG -----------------------------------------------------
+if command -v rsvg-convert >/dev/null 2>&1; then
+    rsvg-convert -w "${LOGO_WIDTH}" "${SVG_WORK}" -o "${LOGO_PATH}"
+elif command -v inkscape >/dev/null 2>&1; then
+    inkscape "${SVG_WORK}" -w "${LOGO_WIDTH}" -o "${LOGO_PATH}"
+else
+    echo "E: no SVG converter found (install librsvg2-bin or inkscape)" >&2
+    exit 1
+fi
+
+if [ ! -s "${LOGO_PATH}" ]; then
+    echo "E: SVG->PNG conversion failed: ${LOGO_PATH}" >&2
+    exit 1
+fi
+
+# --- theme descriptor -------------------------------------------------------
+cat > "${THEME_DIR}/${THEME_NAME}.plymouth" <<EOF
+[Plymouth Theme]
+Name=MSE
+Description=MSE exam boot splash
+ModuleName=script
+
+[script]
+ImageDir=${THEME_DIR}
+ScriptFile=${THEME_DIR}/${THEME_NAME}.script
+EOF
+
+# --- theme script -----------------------------------------------------------
+# 'EOF' quoted so $ and () are written verbatim (Plymouth script, not shell).
+cat > "${THEME_DIR}/${THEME_NAME}.script" <<'EOF'
+# ---- background ------------------------------------------------------------
+Window.SetBackgroundTopColor(0.05, 0.05, 0.10);
+Window.SetBackgroundBottomColor(0.02, 0.02, 0.05);
+
+screen_width  = Window.GetWidth();
+screen_height = Window.GetHeight();
+
+# ---- centre logo -----------------------------------------------------------
+logo.image  = Image("logo.png");
+logo.sprite = Sprite(logo.image);
+logo.x = screen_width  / 2 - logo.image.GetWidth()  / 2;
+logo.y = screen_height / 2 - logo.image.GetHeight() / 2;
+logo.sprite.SetX(logo.x);
+logo.sprite.SetY(logo.y);
+logo.sprite.SetZ(1);
+
+# ---- heartbeat pulse -------------------------------------------------------
+progress = 0;
+fun refresh_callback() {
+    progress++;
+    logo.sprite.SetOpacity(0.65 + 0.35 * Math.Sin(progress / 12));
+}
+Plymouth.SetRefreshFunction(refresh_callback);
+
+# ---- boot status messages --------------------------------------------------
+message_sprite = Sprite();
+message_sprite.SetPosition(screen_width * 0.5, screen_height * 0.82, 10);
+
+fun message_callback(text) {
+    my_image = Image.Text(text, 1, 1, 1);
+    message_sprite.SetImage(my_image);
+    message_sprite.SetX(screen_width / 2 - my_image.GetWidth() / 2);
+}
+Plymouth.SetMessageFunction(message_callback);
+
+# ---- LUKS / password prompt (persistence overlay) --------------------------
+fun display_password_callback(prompt, bullets) {
+    bullet_str = "";
+    i = 0;
+    while (i < bullets) {
+        bullet_str += "*";
+        i++;
+    }
+    prompt_img = Image.Text(prompt + "  " + bullet_str, 1, 1, 1);
+    prompt_sprite = Sprite(prompt_img);
+    prompt_sprite.SetX(screen_width / 2 - prompt_img.GetWidth() / 2);
+    prompt_sprite.SetY(screen_height * 0.70);
+    prompt_sprite.SetZ(10);
+    global.prompt_sprite = prompt_sprite;
+}
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+# clear the prompt when leaving the password state
+fun display_normal_callback() {
+    if (global.prompt_sprite) {
+        global.prompt_sprite = NULL;
+    }
+}
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+EOF
+
+# --- register + activate ----------------------------------------------------
+update-alternatives --install \
+    /usr/share/plymouth/themes/default.plymouth default.plymouth \
+    "${THEME_DIR}/${THEME_NAME}.plymouth" 200
+
+# Activate (also sets the alternative) and rebuild initramfs so the theme +
+# script plugin are embedded.
+plymouth-set-default-theme "${THEME_NAME}"
+update-initramfs -u || echo "W: update-initramfs returned non-zero (often benign in chroot); live-build will regenerate"
+
+echo "P: 0450-plymouth-mse-theme: '${THEME_NAME}' active" 

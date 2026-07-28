@@ -16,7 +16,7 @@ set -e
 # CONFIGURATION — edit here only
 # =============================================================================
 
-MSE_BG_COLOUR="#002B5C"
+MSE_BG_COLOUR="#6A89A7"
 MSE_ACCENT_COLOUR="#FFFFFF"
 
 LOGO_SVG_URL="https://www.msengineering.ch/_assets/0a6b389c64780974c6ce7ea1cdfa38d4/Images/Logo/mse-full-white.svg"

@@ -24,10 +24,33 @@ LIVE_CONFIG_DIR="/lib/live/config"
 DCONF_HOOK="${LIVE_CONFIG_DIR}/0500-mse-dconf"
 
 # =============================================================================
-# PART 1: Install the live-config dconf compile hook
+# PART 1: Ensure the dconf profile loads the local database
+# =============================================================================
+# Without /etc/dconf/profile/user listing "system-db:local", the local
+# database (where 01-mse-wallpaper, 02-mse-dock, 03-mse-keyboard live)
+# is never consulted, and our settings + locks have no effect.
+# lernstick-theme sets the background via GSettings schema defaults;
+# our locked local-db keys override that ONLY if the profile loads local.
+#
+# Profile order: user db first (runtime changes), then local (our defaults
+# and locks). Locks in local make keys immutable, overriding schema defaults.
+
+echo "==> [1/2] Ensuring dconf profile loads local database..."
+
+mkdir -p /etc/dconf/profile
+
+cat > /etc/dconf/profile/user << 'PROFILE_EOF'
+user-db:user
+system-db:local
+PROFILE_EOF
+
+echo "    Profile written: /etc/dconf/profile/user"
+
+# =============================================================================
+# PART 2: Install the live-config dconf compile hook
 # =============================================================================
 
-echo "==> [1/1] Installing live-config dconf compile hook..."
+echo "==> [2/2] Installing live-config dconf compile hook..."
 
 mkdir -p "${LIVE_CONFIG_DIR}"
 

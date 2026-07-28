@@ -138,16 +138,30 @@ cat > "${FETCH_SCRIPT}" << EOF
 # fetch-template.sh
 # Installed by: mse_download_template.hook.chroot
 # Runs at every login via XDG autostart.
-# Downloads the current MSE exam template from SWITCHdrive to the Desktop.
+# Downloads the current MSE exam template from SWITCHdrive to the user's
+# localized Desktop directory (resolved via xdg-user-dir, so it works
+# regardless of locale, e.g. Schreibtisch for de_CH).
 # Falls back to the bundled template if the download fails.
 #
 # --- Properties (inherited from build-time hook configuration) ---
 LIVE_USER="${LIVE_USER}"
-DESKTOP="/home/\${LIVE_USER}/Desktop"
-TARGET="\${DESKTOP}/${TEMPLATE_DEST_NAME}"
 TEMPLATE_LOCAL="${TEMPLATE_FILE}"
 NEXTCLOUD_URL="${NEXTCLOUD_URL}"
 NM_ONLINE_TIMEOUT="${NM_ONLINE_TIMEOUT}"
+
+# Resolve the localized Desktop directory via XDG.
+# The desktop folder name depends on the locale (e.g. de_CH -> Schreibtisch),
+# so we must NOT hardcode "Desktop". xdg-user-dir returns the correct path
+# as configured in ~/.config/user-dirs.dirs.
+if command -v xdg-user-dir >/dev/null 2>&1; then
+    DESKTOP="\$(xdg-user-dir DESKTOP)"
+fi
+# Fallbacks if xdg-user-dir is unavailable or returns nothing
+if [ -z "\${DESKTOP}" ] || [ "\${DESKTOP}" = "\${HOME}" ]; then
+    DESKTOP="\${HOME}/Desktop"
+fi
+
+TARGET="\${DESKTOP}/${TEMPLATE_DEST_NAME}"
 
 # Ensure Desktop exists
 mkdir -p "\${DESKTOP}"

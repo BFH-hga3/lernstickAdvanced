@@ -15,6 +15,10 @@
 #   - NO bookmarks. Removed entirely — the launchers replace them.
 #   - Translations disabled (browser.translations.*).
 #   - Private-browsing mozilla.org info page fully suppressed.
+#   - Service icons (Moodle, FileDrop) fetched from the web at build time.
+#
+# Requires curl + imagemagick (convert) for icon fetching — both present
+# at this stage, removed later by 99-uninstall_packages.
 #
 # All configurable properties are defined at the top.
 
@@ -30,6 +34,16 @@ FF_PROFILE_NAME="exam.default"
 # URLs
 URL_MOODLE="https://moodle.msengineering.ch"
 URL_FILEDROP="https://drive.switch.ch/index.php/s/NnNaOgN4lHaqe2M"
+
+# Icon source URLs — fetched at build time from the services themselves.
+# Favicons live at the site root; we convert them to PNG for the launchers.
+ICON_MOODLE_URL="https://moodle.msengineering.ch/favicon.ico"
+ICON_FILEDROP_URL="https://drive.switch.ch/favicon.ico"
+
+# Installed icon paths (hicolor theme, 128x128)
+ICON_DIR="/usr/share/icons/hicolor/128x128/apps"
+ICON_MOODLE="${ICON_DIR}/mse-moodle.png"
+ICON_FILEDROP="${ICON_DIR}/mse-filedrop.png"
 
 # System policy paths
 POLICY_FILE="/usr/lib/firefox-esr/distribution/policies.json"
@@ -61,8 +75,9 @@ FF_USER_JS="${FF_PROFILE_DIR}/user.js"
 # =============================================================================
 # PART 1: System-wide Firefox enterprise policy
 # =============================================================================
+echo "P: 92-mse_firefox_setup.chroot | Firefox setup start."
 
-echo "==> [1/4] Writing Firefox enterprise policy..."
+echo "I: Writing Firefox enterprise policy..."
 
 mkdir -p "$(dirname ${POLICY_FILE})"
 
@@ -134,7 +149,7 @@ echo "    Symlinked: ${POLICY_LINK_DIR}/policies.json -> ${POLICY_FILE}"
 # PART 2: Firefox exam profile (profiles.ini + user.js)
 # =============================================================================
 
-echo "==> [2/4] Creating Firefox exam profile..."
+echo "I: Creating Firefox exam profile..."
 
 mkdir -p "${FF_PROFILE_DIR}"
 
@@ -225,9 +240,77 @@ echo "    user.js written: ${FF_USER_JS}"
 # PART 3: Two wrapper scripts + two desktop launchers
 # =============================================================================
 
-echo "==> [3/4] Installing Moodle and FileDrop launchers..."
+echo "I: Installing Moodle and FileDrop launchers..."
 
-mkdir -p /usr/local/bin
+if [ ! -d /usr/local/bin ]; then
+    mkdir -p /usr/local/bin
+fi
+if [ ! -d "${ICON_DIR}" ]; then
+    mkdir -p "${ICON_DIR}"
+fi
+
+# --- Fetch service icons from the web ---
+# Downloads the favicon from each service, converts to a single PNG in a temp
+# working directory, then copies the finished PNG into ICON_DIR in the fs tree.
+# Falls back to firefox-esr icon name if download or conversion fails.
+fetch_icon() {
+    URL="$1"; OUT="$2"; NAME="$3"
+    TMP="/tmp/${NAME}.ico"
+    WORK="/tmp/${NAME}-work.png"
+
+    if ! curl -fsSL --connect-timeout 15 --max-time 30 "${URL}" -o "${TMP}" 2>/dev/null; then
+        rm -f "${TMP}"
+        echo "    WARNING: icon download failed for ${NAME} — using firefox-esr."
+        return 1
+    fi
+
+    # A favicon.ico often contains multiple frames (16x16, 32x32, 48x48, ...).
+    # Converting a multi-frame ICO directly to PNG makes convert emit one
+    # numbered file PER frame (name-0.png, -1.png, ...) instead of one file.
+    # Fix: pick the single largest frame, convert only that frame into a temp
+    # working file, then copy the finished PNG into ICON_DIR explicitly.
+    BEST_INDEX=0
+    BEST_HEIGHT=0
+    INDEX=0
+    for H in $(identify -format '%h\n' "${TMP}" 2>/dev/null); do
+        if [ "${H}" -gt "${BEST_HEIGHT}" ] 2>/dev/null; then
+            BEST_HEIGHT="${H}"
+            BEST_INDEX="${INDEX}"
+        fi
+        INDEX=$((INDEX + 1))
+    done
+
+    # Convert the chosen frame to a single PNG in the temp working location.
+    if ! convert "${TMP}[${BEST_INDEX}]" -resize 128x128 -background none \
+        -gravity center -extent 128x128 "${WORK}" 2>/dev/null || [ ! -f "${WORK}" ]; then
+        rm -f "${TMP}" "${WORK}" "/tmp/${NAME}-work-"*.png 2>/dev/null || true
+        echo "    WARNING: icon convert failed for ${NAME} — using firefox-esr."
+        return 1
+    fi
+
+    # Copy the finished PNG into the icon theme directory in the fs tree.
+    cp "${WORK}" "${OUT}"
+    chmod 644 "${OUT}"
+
+    # Clean up temp files
+    rm -f "${TMP}" "${WORK}"
+
+    echo "    Icon installed: ${OUT} (frame ${BEST_INDEX}, ${BEST_HEIGHT}px source)"
+    return 0
+}
+
+# Fetch both icons; record which succeeded so launchers use the right Icon= value
+if fetch_icon "${ICON_MOODLE_URL}" "${ICON_MOODLE}" "mse-moodle"; then
+    ICON_MOODLE_VALUE="${ICON_MOODLE}"
+else
+    ICON_MOODLE_VALUE="firefox-esr"
+fi
+
+if fetch_icon "${ICON_FILEDROP_URL}" "${ICON_FILEDROP}" "mse-filedrop"; then
+    ICON_FILEDROP_VALUE="${ICON_FILEDROP}"
+else
+    ICON_FILEDROP_VALUE="firefox-esr"
+fi
 
 # --- Moodle wrapper ---
 cat > "${SCRIPT_MOODLE}" << EOF
@@ -256,7 +339,7 @@ Type=Application
 Name=MSE Moodle
 Comment=Open MSE Moodle in Firefox (private mode)
 Exec=${SCRIPT_MOODLE}
-Icon=firefox-esr
+Icon=${ICON_MOODLE_VALUE}
 Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
@@ -271,7 +354,7 @@ Type=Application
 Name=MSE FileDrop
 Comment=Open MSE FileDrop in Firefox (private mode)
 Exec=${SCRIPT_FILEDROP}
-Icon=firefox-esr
+Icon=${ICON_FILEDROP_VALUE}
 Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
@@ -279,17 +362,16 @@ EOF
 echo "    Launcher: ${LAUNCHER_FILEDROP}"
 
 # --- Symlink both into skel Desktop ---
-## hga3 remove
-#mkdir -p "$(dirname ${LAUNCHER_MOODLE_SKEL})"
-#ln -sf "${LAUNCHER_MOODLE}"   "${LAUNCHER_MOODLE_SKEL}"
-#ln -sf "${LAUNCHER_FILEDROP}" "${LAUNCHER_FILEDROP_SKEL}"
-#echo "    Desktop symlinks created for both launchers."
+mkdir -p "$(dirname ${LAUNCHER_MOODLE_SKEL})"
+ln -sf "${LAUNCHER_MOODLE}"   "${LAUNCHER_MOODLE_SKEL}"
+ln -sf "${LAUNCHER_FILEDROP}" "${LAUNCHER_FILEDROP_SKEL}"
+echo "    Desktop symlinks created for both launchers."
 
 # =============================================================================
 # PART 4: Trust-launcher autostart
 # =============================================================================
 
-echo "==> [4/4] Installing trust launcher..."
+echo "I: Installing trust launcher..."
 # Dock favorites are configured by 91-mse_dock.chroot.
 
 # --- Trust-launcher script: marks both .desktop files trusted at login ---
@@ -337,4 +419,4 @@ EOF
 
 echo "    Trust script: ${TRUST_SCRIPT}"
 echo "    Trust autostart: ${TRUST_AUTOSTART}"
-echo "==> Firefox setup complete."
+echo "P: 92-mse_firefox_setup.chroot | Firefox setup complete."

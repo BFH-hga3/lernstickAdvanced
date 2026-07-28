@@ -28,7 +28,7 @@ lernstick-ranger
 lernstick-speech-dispatcher
 lernstick-systemd
 #lernstick-texlive-base
-lernstick-theme
+#lernstick-theme
 lernstick-vim-common
 lernstick-virtualbox-guest-utils
 lernstick-x11vnc
