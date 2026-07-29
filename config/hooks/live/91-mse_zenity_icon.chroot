@@ -1,0 +1,159 @@
+#!/bin/sh
+# 91b-mse_zenity_icon.chroot
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
+#
+# Installs a desktop-entry ICON ASSOCIATION for zenity dialogs so that a
+# running zenity window shows a proper icon in the GNOME dock instead of the
+# generic placeholder.
+#
+# This is NOT a launcher. With NoDisplay=true the entry never appears in the
+# app grid, menu, or search — it exists purely so GNOME Shell can match a
+# window whose WM_CLASS is "zenity" to an icon (via StartupWMClass) and draw
+# that icon on the dock tile.
+#
+# GNOME matches windows to icons by WM_CLASS -> .desktop (StartupWMClass).
+# zenity ships no .desktop, so its dialogs have no icon association at all;
+# this file provides one.
+#
+# Log prefixes: E: error, W: warning, I: info, P: progress/phase.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+# Filesystem root prefix. Production: "" (real root). Testing: e.g. /tmp/test.
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
+
+# Window class of zenity dialogs. Confirm on your system with:
+#   zenity --info --text=test &   then   xprop WM_CLASS  (click the dialog)
+# It is normally "zenity" (lowercase) on Debian; adjust if yours differs.
+ZENITY_WM_CLASS="zenity"
+
+# Icon shown for zenity/system-message windows.
+# Standard freedesktop theme names (always present in Adwaita):
+#   dialog-information  general info   (recommended default)
+#   dialog-warning      warnings
+#   dialog-error        errors
+#   dialog-question     prompts
+#   emblem-important    important notices
+#   security-high       security / exam-integrity
+ICON_ZENITY_FALLBACK="dialog-information"
+
+# Or an absolute path to a custom MSE icon, e.g.
+#   /usr/share/icons/hicolor/512x512/apps/mse-notification.png
+# Icon source URLs — single-file SWITCHdrive shares. The share URL returns an
+# HTML page; appending /download returns the raw image file for conversion.
+ICON_ZENITY_URL="https://drive.switch.ch/index.php/s/mJSOcgVHpzoNPQN/download"
+
+# Installed icon paths (hicolor icon theme, 512x512 apps)
+ICON_DIR="${FS_ROOT_DIR}/usr/share/icons/hicolor/512x512/apps"
+ICON_ZENITY="${ICON_DIR}/mse-notification.png"
+
+# Displayed name (titlebar/dock tooltip). Kept generic + branded.
+ZENITY_NAME="MSE System Message"
+
+# =============================================================================
+# DERIVED PATHS — do not edit
+# =============================================================================
+
+APPLICATIONS_DIR="${FS_ROOT_DIR}/usr/share/applications"
+ZENITY_DESKTOP="${APPLICATIONS_DIR}/zenity.desktop"
+
+# RUNTIME paths — always real-root, NEVER prefixed with FS_ROOT_DIR.
+# Used for values written INTO files (.desktop Icon=/Exec=, ln -sf targets),
+# because on the booted system those paths have no test prefix.
+RT_ICON_DIR="/usr/share/icons/hicolor/512x512/apps"
+RT_ICON_ZENITY="${RT_ICON_DIR}/mse-notification.png"
+
+# =============================================================================
+
+if [ ! -d "${ICON_DIR}" ]; then
+    mkdir -p "${ICON_DIR}"
+fi
+
+# --- Fetch service icons from the web ---
+# Downloads the favicon from each service, converts to a single PNG in a temp
+# working directory, then copies the finished PNG into ICON_DIR in the fs tree.
+# Falls back to firefox-esr icon name if download or conversion fails.
+fetch_icon() {
+    URL="$1"; OUT="$2"; NAME="$3"
+    TMP="/tmp/${NAME}.download"
+    WORK="/tmp/${NAME}-work.png"
+
+    if ! curl -fsSL --connect-timeout 15 --max-time 30 "${URL}" -o "${TMP}" 2>/dev/null; then
+        rm -f "${TMP}"
+        echo "W:   Icon download failed for ${NAME} -- using firefox-esr."
+        return 1
+    fi
+
+    # The download may be PNG, ICO (multi-frame) or SVG. For a multi-frame ICO,
+    # pick the largest frame so convert emits exactly one output file.
+    BEST_INDEX=0; BEST_HEIGHT=0; INDEX=0
+    for H in $(identify -format '%h\n' "${TMP}" 2>/dev/null); do
+        if [ "${H}" -gt "${BEST_HEIGHT}" ] 2>/dev/null; then
+            BEST_HEIGHT="${H}"; BEST_INDEX="${INDEX}"
+        fi
+        INDEX=$((INDEX + 1))
+    done
+
+    # Convert the chosen frame to a single PNG in the temp working location.
+    if ! convert "${TMP}[${BEST_INDEX}]" -resize 512x512 -background none \
+        -gravity center -extent 512x512 "${WORK}" 2>/dev/null || [ ! -f "${WORK}" ]; then
+        rm -f "${TMP}" "${WORK}" "/tmp/${NAME}-work-"*.png 2>/dev/null || true
+        echo "W:   Icon convert failed for ${NAME} -- using firefox-esr."
+        return 1
+    fi
+
+    # Copy the finished PNG into the icon theme directory in the fs tree.
+    cp "${WORK}" "${OUT}"
+    chmod 644 "${OUT}"
+    rm -f "${TMP}" "${WORK}"
+
+    echo "I:   Icon installed: ${OUT} (frame ${BEST_INDEX}, ${BEST_HEIGHT}px source)"
+    return 0
+}
+
+# Fetch both icons; record which succeeded so launchers use the right Icon= value
+if fetch_icon "${ICON_ZENITY_URL}" "${ICON_ZENITY}" "mse-notification"; then
+    ICON_MOODLE_VALUE="${RT_ICON_ZENITY}"
+else
+    ICON_MOODLE_VALUE="${ICON_ZENITY_FALLBACK}"
+fi
+
+
+# =============================================================================
+# PART 1: Install the zenity icon-association desktop entry
+# =============================================================================
+
+echo "P: 91-mse_zenity_icon.chroot | installing zenity icon association..."
+
+if [ ! -d "${APPLICATIONS_DIR}" ]; then
+    mkdir -p "${APPLICATIONS_DIR}"
+fi
+
+cat > "${ZENITY_DESKTOP}" << EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=${ZENITY_NAME}
+Comment=Icon association for zenity dialog windows (not a launcher)
+Exec=zenity
+Icon=${RT_ICON_ZENITY}
+StartupWMClass=${ZENITY_WM_CLASS}
+Terminal=false
+NoDisplay=true
+Categories=System;
+EOF
+
+if [ ! -f "${ZENITY_DESKTOP}" ]; then
+    echo "E: failed to write ${ZENITY_DESKTOP}"
+    exit 1
+fi
+
+echo "I: written: ${ZENITY_DESKTOP}"
+echo "I: WM_CLASS='${ZENITY_WM_CLASS}' -> icon '${ICON_ZENITY}'"
+echo "P: 91-mse_zenity_icon.chroot | complete."
