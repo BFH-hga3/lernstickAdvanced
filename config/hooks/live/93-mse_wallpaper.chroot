@@ -116,7 +116,7 @@ convert \
     -font DejaVu-Sans \
     -pointsize 24 \
     -gravity South \
-    -annotate +0+60 "${WALLPAPER_TEXT}" \
+    -annotate +${WALLPAPER_HEIGHT}-60 "${WALLPAPER_TEXT}" \
     "${WALLPAPER_FILE}"
 
 echo "I: wallpaper written: ${WALLPAPER_FILE}"
