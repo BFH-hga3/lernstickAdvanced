@@ -13,7 +13,7 @@ exe-thumbnailer
 lernstick-libreoffice-lockdown
 #lernstick-pspp
 #lernstick-r-base-core
-lernstick-virtualbox
+#lernstick-virtualbox
 #lernstick-wine
 #processing
 #rstudio
