@@ -1,0 +1,170 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# 65-mse_timezone-ntp.hook.chroot
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
+#
+# Live-build chroot hook. Sets up automatic, boot-time timezone detection
+# (via IP geolocation, with a Swiss fallback) and NTP time synchronisation
+# against the Swiss federal time servers (METAS).
+#
+# Installs:
+#   /usr/local/sbin/mse-set-timezone               detection + tz set + sync
+#   /etc/systemd/system/mse-set-timezone.service   boot oneshot unit
+#   /etc/systemd/timesyncd.conf.d/mse.conf         METAS NTP servers
+#
+# Self-contained, single-concern. Requires (pulled by package list, not here):
+#   tzdata, systemd-timesyncd, curl, ca-certificates
+# ---------------------------------------------------------------------------
+set -e
+
+echo "P: 65-mse_timezone-ntp.hook.chroot | configuring MSE timezone detection + NTP sync"
+
+# Filesystem root prefix. Production: "" (real root, i.e. the chroot itself).
+# Testing outside a chroot: e.g. FS_ROOT_DIR=/tmp/test to see where files land.
+#
+# IMPORTANT: FS_ROOT_DIR only prefixes WHERE THIS HOOK WRITES during build.
+# It must NEVER appear in the *content* of the installed files: at runtime the
+# target uses real absolute paths (/etc, /var/log, /usr/share/zoneinfo).
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
+
+# --- runtime (in-target) paths: absolute, no prefix ------------------------
+RT_SCRIPT="/usr/local/sbin/mse-set-timezone"
+RT_SERVICE_NAME="mse-set-timezone.service"
+
+# --- build-time write targets: prefixed by FS_ROOT_DIR ---------------------
+TIMESYNCD_LOCATION_DIR="${FS_ROOT_DIR}/etc/systemd/timesyncd.conf.d"
+TIMESYNCD_CONFIG="${TIMESYNCD_LOCATION_DIR}/mse.conf"
+
+SCRIPT_DIR="${FS_ROOT_DIR}/usr/local/sbin"
+SCRIPT_FILE="${SCRIPT_DIR}/mse-set-timezone"
+
+SERVICE_DIR="${FS_ROOT_DIR}/etc/systemd/system"
+SERVICE_FILE="${SERVICE_DIR}/${RT_SERVICE_NAME}"
+
+# ---------------------------------------------------------------------------
+# 1. systemd-timesyncd: point at METAS Swiss federal time servers.
+#    ntp.metas.ch is a DNS alias that rotates over ntp11/12/13; list all three
+#    explicitly so a single-host outage still syncs. NTP is UDP/123.
+# ---------------------------------------------------------------------------
+mkdir -p "${TIMESYNCD_LOCATION_DIR}"
+
+cat > "${TIMESYNCD_CONFIG}" <<'EOF'
+[Time]
+# Swiss Federal Institute of Metrology (METAS) stratum-1 servers.
+NTP=ntp11.metas.ch ntp12.metas.ch ntp13.metas.ch
+# Debian NTP pool as a secondary fallback (Swiss zone first).
+FallbackNTP=0.ch.pool.ntp.org 1.ch.pool.ntp.org 2.ch.pool.ntp.org
+EOF
+
+# ---------------------------------------------------------------------------
+# 2. the detection + set script.
+#    Heredoc is QUOTED ('EOF') so the inner script's $1, $*, $(date ...) stay
+#    literal. All runtime constants are hardcoded absolute paths inside the
+#    script -- they are NOT injected from the hook (that is what previously
+#    left them empty and forced the fallback every time).
+# ---------------------------------------------------------------------------
+mkdir -p "${SCRIPT_DIR}"
+
+cat > "${SCRIPT_FILE}" <<'EOF'
+#!/bin/sh
+# Detect timezone via IP geolocation and apply it, then sync the clock.
+# Falls back to Europe/Zurich on any failure (offline, firewall, VPN, junk).
+set -eu
+
+FALLBACK_TZ="Europe/Zurich"
+LOG="/var/log/mse-timezone.log"
+ZONE_DIR="/usr/share/zoneinfo"
+
+log() { echo "$(date -u '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG"; }
+
+apply_tz() {
+	_tz="$1"
+	# Validate the zone actually exists before applying.
+	if [ -f "${ZONE_DIR}/${_tz}" ]; then
+		ln -sf "${ZONE_DIR}/${_tz}" /etc/localtime
+		echo "${_tz}" > /etc/timezone
+		# Keep timedatectl's view consistent (best effort).
+		timedatectl set-timezone "${_tz}" 2>/dev/null || true
+		log "timezone set to ${_tz}"
+		return 0
+	fi
+	log "invalid timezone '${_tz}', ignoring"
+	return 1
+}
+
+# --- geolocation -----------------------------------------------------------
+# ipapi.co returns just the IANA zone on this endpoint (HTTPS/443).
+# Short timeout so a locked-down network doesn't stall boot.
+TZ_GUESS="$(curl -fsS --max-time 8 https://ipapi.co/timezone 2>/dev/null || true)"
+
+# Basic sanity: must look like 'Area/Location'.
+case "${TZ_GUESS}" in
+	*/*) : ;;                       # plausible
+	*)   TZ_GUESS="" ;;             # empty or garbage -> fallback
+esac
+
+if [ -n "${TZ_GUESS}" ] && apply_tz "${TZ_GUESS}"; then
+	log "geolocation timezone applied: ${TZ_GUESS}"
+else
+	apply_tz "${FALLBACK_TZ}" || true
+	log "fell back to ${FALLBACK_TZ}"
+fi
+
+# --- force an NTP resync now that the zone is set --------------------------
+# Restart timesyncd so it re-reads config and steps the clock immediately.
+systemctl restart systemd-timesyncd 2>/dev/null || true
+# Nudge an immediate sync where available.
+timedatectl set-ntp true 2>/dev/null || true
+
+log "done"
+EOF
+
+chmod 0755 "${SCRIPT_FILE}"
+
+# ---------------------------------------------------------------------------
+# 3. boot-time oneshot service.
+#    Written to /etc/systemd/system (NOT /usr/local/sbin -- that was the bug).
+#    Paths in the unit are literal absolute paths: systemd does not expand
+#    shell ${...}, so they must be hardcoded (matching RT_SCRIPT above).
+# ---------------------------------------------------------------------------
+mkdir -p "${SERVICE_DIR}"
+
+cat > "${SERVICE_FILE}" <<'EOF'
+[Unit]
+Description=MSE: detect timezone via geolocation and sync time
+After=network-online.target
+Wants=network-online.target
+# Run before the graphical session so the exam clock is correct at login.
+Before=display-manager.service
+ConditionPathExists=/usr/local/sbin/mse-set-timezone
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/mse-set-timezone
+RemainAfterExit=yes
+# Don't let a slow/blocked lookup hang the boot.
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# ---------------------------------------------------------------------------
+# 4. enable units.
+#    In a chroot, `systemctl enable` may not run (no running systemd). Prefer
+#    creating the enablement symlink directly so it survives image build.
+# ---------------------------------------------------------------------------
+if systemctl enable systemd-timesyncd.service 2>/dev/null \
+   && systemctl enable "${RT_SERVICE_NAME}" 2>/dev/null; then
+	echo "P: units enabled via systemctl"
+else
+	# Fallback: create WantedBy symlink manually (chroot-safe).
+	echo "P: systemctl unavailable in chroot, creating enable symlink manually"
+	mkdir -p "${SERVICE_DIR}/multi-user.target.wants"
+	ln -sf "/etc/systemd/system/${RT_SERVICE_NAME}" \
+		"${SERVICE_DIR}/multi-user.target.wants/${RT_SERVICE_NAME}"
+fi
+
+echo "P: 65-mse_timezone-ntp.hook.chroot | timezone/NTP setup complete"
