@@ -14,6 +14,7 @@ set -e
 
 SRC="${1:-background.png}"
 OUTDIR="${2:-.}"
+BG="${3:-#0A1A2F}"   # canvas fill for letterboxed areas (MSE navy)
 
 RESOLUTIONS="
 800x600
@@ -36,9 +37,10 @@ mkdir -p "$OUTDIR"
 for res in $RESOLUTIONS; do
     out="$OUTDIR/splash_${res}.jpg"
     echo "==> $SRC -> $out (${res})"
-    convert "$SRC" \
+     convert "$SRC" \
         -colorspace sRGB \
-        -resize "${res}^" \
+        -resize "${res}>" \
+        -background "$BG" \
         -gravity center \
         -extent "$res" \
         -strip \
