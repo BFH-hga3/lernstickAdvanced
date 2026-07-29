@@ -1,0 +1,237 @@
+#!/bin/sh
+# 90-mse_download_factsheet.chroot
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
+#
+# Must run before 99-uninstall_packages (uses curl).
+#
+# Fetches the MSE viewing-session factsheet PDF from SWITCHdrive:
+#   1. At BUILD time: download it and store as the bundled fallback.
+#   2. Validate it is really a PDF (magic bytes %PDF).
+#   3. Install fetch-factsheet.sh to refresh it at every login, notify the
+#      user, and fall back to the build-time copy if the download fails.
+#   4. Install the XDG autostart entry to trigger fetch-factsheet.sh.
+#
+# Mirrors 90-mse_download_template.chroot. All paths declared at the top.
+#
+# PATH CONVENTION
+#   FS_ROOT_DIR ... build-time prefix ("" = production, /tmp/test = testing),
+#                  applied to every WRITE location.
+#   RT_* .......... runtime paths (real root), used INSIDE the generated
+#                   login script and the autostart Exec=.
+#
+# Log prefixes: E: error, W: warning, I: info, P: progress/phase.
+
+set -e
+
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
+
+# Filesystem root prefix. Production: "" (real root). Testing: e.g. /tmp/test.
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
+
+LIVE_USER="user"
+
+# Destination filename shown on the user's Desktop
+FACTSHEET_DEST_NAME="MSE_viewingSession-factsheet.pdf"
+
+# SWITCHdrive single-file share (append /download to get the raw file)
+FACTSHEET_URL="https://drive.switch.ch/index.php/s/IAlzvqun4WmUYAM/download"
+
+# Retry / network tuning
+MAX_RETRIES=3
+RETRY_DELAY=5
+NM_ONLINE_TIMEOUT=10
+
+# =============================================================================
+# DERIVED PATHS — do not edit
+# =============================================================================
+
+# Runtime paths (real root) — used inside the login script + autostart Exec=.
+RT_FACTSHEET_DIR="/usr/local/share/mse"
+RT_FACTSHEET_FILE="${RT_FACTSHEET_DIR}/${FACTSHEET_DEST_NAME}"
+RT_FETCH_SCRIPT="/usr/local/bin/fetch-factsheet.sh"
+
+# Build-time WRITE locations (prefixed).
+FACTSHEET_DIR="${FS_ROOT_DIR}${RT_FACTSHEET_DIR}"
+FACTSHEET_FILE="${FS_ROOT_DIR}${RT_FACTSHEET_FILE}"
+FETCH_SCRIPT="${FS_ROOT_DIR}${RT_FETCH_SCRIPT}"
+AUTOSTART_ENTRY="${FS_ROOT_DIR}/etc/xdg/autostart/fetch-factsheet.desktop"
+
+# PDF magic bytes: "%PDF" = 25 50 44 46
+PDF_MAGIC="25504446"
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+ensure_dir() {
+    if [ ! -d "$1" ]; then
+        mkdir -p "$1"
+    fi
+}
+
+# Check whether $1 is a non-empty file starting with the PDF magic bytes.
+is_pdf() {
+    _f="$1"
+    [ -s "${_f}" ] || return 1
+    _magic=$(dd if="${_f}" bs=1 count=4 2>/dev/null | od -A n -t x1 | tr -d ' \n')
+    [ "${_magic}" = "${PDF_MAGIC}" ]
+}
+
+# =============================================================================
+# PART 1: Download the factsheet at build time (bundled fallback)
+# =============================================================================
+
+echo "P: 90-mse_download_factsheet.chroot | downloading factsheet from SWITCHdrive..."
+
+ensure_dir "${FACTSHEET_DIR}"
+
+ATTEMPT=0
+SUCCESS=0
+
+while [ ${ATTEMPT} -lt ${MAX_RETRIES} ]; do
+    ATTEMPT=$((ATTEMPT + 1))
+    echo "I: attempt ${ATTEMPT}/${MAX_RETRIES}..."
+
+    if curl -fsSL --connect-timeout 15 --max-time 60 \
+        "${FACTSHEET_URL}" -o "${FACTSHEET_FILE}.tmp" 2>/dev/null; then
+
+        if is_pdf "${FACTSHEET_FILE}.tmp"; then
+            mv "${FACTSHEET_FILE}.tmp" "${FACTSHEET_FILE}"
+            SUCCESS=1
+            echo "I: downloaded and validated PDF ($(wc -c < "${FACTSHEET_FILE}") bytes)"
+            break
+        else
+            echo "W: downloaded file is not a valid PDF -- discarding."
+            rm -f "${FACTSHEET_FILE}.tmp"
+        fi
+    else
+        echo "W: curl failed on attempt ${ATTEMPT}."
+        rm -f "${FACTSHEET_FILE}.tmp"
+    fi
+
+    if [ ${ATTEMPT} -lt ${MAX_RETRIES} ]; then
+        echo "I: retrying in ${RETRY_DELAY} seconds..."
+        sleep ${RETRY_DELAY}
+    fi
+done
+
+rm -f "${FACTSHEET_FILE}.tmp"
+
+if [ ${SUCCESS} -eq 0 ]; then
+    echo "W: could not fetch a valid factsheet PDF after ${MAX_RETRIES} attempts."
+    echo "W: no build-time fallback will be bundled; the login fetch will retry."
+    echo "W: URL: ${FACTSHEET_URL}"
+    # Note: we intentionally do NOT create a bogus file — is_pdf checks at login
+    # will simply find no fallback and the user is notified.
+fi
+
+# =============================================================================
+# PART 2: Install fetch-factsheet.sh (refreshes at every login + notifies)
+# =============================================================================
+
+echo "P: 90-mse_download_factsheet.chroot | installing ${FETCH_SCRIPT}..."
+
+ensure_dir "$(dirname ${FETCH_SCRIPT})"
+
+cat > "${FETCH_SCRIPT}" << EOF
+#!/bin/sh
+# fetch-factsheet.sh
+# Installed by: 90-mse_download_factsheet.chroot
+# Runs at every login via XDG autostart.
+# Downloads the current MSE viewing-session factsheet PDF from SWITCHdrive to
+# the user's localized Desktop directory (resolved via xdg-user-dir).
+# Validates it is a PDF; on any failure falls back to the build-time copy.
+# Sends a desktop notification about the outcome.
+#
+# --- Properties (inherited from build-time hook configuration) ---
+LIVE_USER="${LIVE_USER}"
+FACTSHEET_LOCAL="${RT_FACTSHEET_FILE}"
+FACTSHEET_URL="${FACTSHEET_URL}"
+FACTSHEET_DEST_NAME="${FACTSHEET_DEST_NAME}"
+NM_ONLINE_TIMEOUT="${NM_ONLINE_TIMEOUT}"
+PDF_MAGIC="${PDF_MAGIC}"
+
+# Resolve the localized Desktop directory (e.g. de_CH -> Schreibtisch).
+if command -v xdg-user-dir >/dev/null 2>&1; then
+    DESKTOP="\$(xdg-user-dir DESKTOP)"
+fi
+if [ -z "\${DESKTOP}" ] || [ "\${DESKTOP}" = "\${HOME}" ]; then
+    DESKTOP="\${HOME}/Desktop"
+fi
+
+TARGET="\${DESKTOP}/\${FACTSHEET_DEST_NAME}"
+mkdir -p "\${DESKTOP}"
+
+# PDF check helper (same magic-byte test as the build hook)
+is_pdf() {
+    [ -s "\$1" ] || return 1
+    _m=\$(dd if="\$1" bs=1 count=4 2>/dev/null | od -A n -t x1 | tr -d ' \n')
+    [ "\${_m}" = "\${PDF_MAGIC}" ]
+}
+
+notify() {
+    # \$1 = urgency, \$2 = icon, \$3 = body
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send --urgency="\$1" --icon="\$2" "MSE Factsheet" "\$3"
+    fi
+}
+
+# Wait for network
+if command -v nm-online >/dev/null 2>&1; then
+    nm-online -q --timeout=\${NM_ONLINE_TIMEOUT}
+fi
+
+# Try to download the latest factsheet
+DL_OK=0
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "\${FACTSHEET_URL}" -o "\${TARGET}.tmp" 2>/dev/null && DL_OK=1
+elif command -v wget >/dev/null 2>&1; then
+    wget -q "\${FACTSHEET_URL}" -O "\${TARGET}.tmp" 2>/dev/null && DL_OK=1
+fi
+
+if [ "\${DL_OK}" -eq 1 ] && is_pdf "\${TARGET}.tmp"; then
+    mv "\${TARGET}.tmp" "\${TARGET}"
+    notify low document-new "Latest factsheet downloaded from SWITCHdrive."
+else
+    rm -f "\${TARGET}.tmp"
+    # Fall back to the build-time bundled copy, if present and valid
+    if is_pdf "\${FACTSHEET_LOCAL}"; then
+        cp "\${FACTSHEET_LOCAL}" "\${TARGET}"
+        notify normal dialog-warning "Using bundled factsheet (SWITCHdrive unavailable)."
+    else
+        notify critical dialog-error "Factsheet unavailable and no local fallback present."
+    fi
+fi
+
+# Fix ownership if the file was placed
+if [ -f "\${TARGET}" ]; then
+    chown "\${LIVE_USER}:\${LIVE_USER}" "\${TARGET}"
+fi
+EOF
+
+chmod +x "${FETCH_SCRIPT}"
+echo "I: installed: ${FETCH_SCRIPT}"
+
+# =============================================================================
+# PART 3: Install the XDG autostart entry
+# =============================================================================
+
+echo "P: 90-mse_download_factsheet.chroot | installing XDG autostart entry..."
+
+ensure_dir "$(dirname ${AUTOSTART_ENTRY})"
+
+cat > "${AUTOSTART_ENTRY}" << EOF
+[Desktop Entry]
+Type=Application
+Name=Fetch MSE Factsheet
+Comment=Downloads the MSE viewing-session factsheet PDF from SWITCHdrive at login
+Exec=${RT_FETCH_SCRIPT}
+X-GNOME-Autostart-enabled=true
+EOF
+
+echo "I: installed: ${AUTOSTART_ENTRY}"
+echo "P: 90-mse_download_factsheet.chroot | complete."
