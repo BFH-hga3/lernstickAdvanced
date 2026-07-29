@@ -1,14 +1,16 @@
 #!/bin/sh
 # 93-mse_wallpaper.chroot
 #
-# Generates and installs the MSE GNOME desktop wallpaper only.
-# Downloads the MSE logo, generates a wallpaper image, and writes the
-# wallpaper/screensaver dconf keyfile + locks.
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
 #
-# dconf is compiled at boot by 0500-mse-dconf (installed by
-# 98-mse_dconf_compile.chroot), NOT here.
+# Generates and installs the MSE GNOME desktop wallpaper. Downloads the MSE
+# logo, generates a wallpaper image, and writes the wallpaper/screensaver
+# dconf keyfile + locks. dconf is compiled at boot by 0500-mse-dconf.
 #
 # Requires imagemagick + librsvg2-bin — must run before 99-uninstall_packages.
+#
+# Log prefixes: E: error, W: warning, I: info, P: progress/phase.
 
 set -e
 
@@ -16,23 +18,28 @@ set -e
 # CONFIGURATION — edit here only
 # =============================================================================
 
+# Filesystem root prefix. Production: "" (real root). Testing: e.g. /tmp/test.
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
+
 MSE_BG_COLOUR="#6A89A7"
 MSE_ACCENT_COLOUR="#FFFFFF"
 
-LOGO_SVG_URL="https://www.msengineering.ch/_assets/0a6b389c64780974c6ce7ea1cdfa38d4/Images/Logo/mse-full-white.svg"
+LOGO_SVG_URL="https://drive.switch.ch/index.php/s/bN6iXPThkr3NXX5/download"
 
 WALLPAPER_WIDTH=1920
 WALLPAPER_HEIGHT=1080
-WALLPAPER_TEXT="Master of Science in Engineering — Exam Environment"
+WALLPAPER_TEXT="— Exam Viewing Session Environment —"
 
 # =============================================================================
 # DERIVED PATHS — do not edit
 # =============================================================================
 
-WALLPAPER_DIR="/usr/share/backgrounds/mse"
-WALLPAPER_FILE="${WALLPAPER_DIR}/mse-wallpaper.png"
+# Write location (prefixed) and runtime path (real root, for dconf value).
+WALLPAPER_SUBPATH="/usr/share/backgrounds/mse/mse-wallpaper.png"
+WALLPAPER_FILE="${FS_ROOT_DIR}${WALLPAPER_SUBPATH}"
+RT_WALLPAPER_FILE="${WALLPAPER_SUBPATH}"
 
-DCONF_DIR="/etc/dconf/db/local.d"
+DCONF_DIR="${FS_ROOT_DIR}/etc/dconf/db/local.d"
 DCONF_LOCKS_DIR="${DCONF_DIR}/locks"
 
 WORK_DIR="/tmp/mse-wallpaper"
@@ -45,22 +52,22 @@ LOGO_PNG="${WORK_DIR}/mse-logo-white.png"
 
 require_tool() {
     if ! command -v "$1" >/dev/null 2>&1; then
-        echo "ERROR: required tool '$1' not found."
-        echo "       Add the package providing '$1' to your package lists."
+        echo "E: required tool '$1' not found."
+        echo "E: add the package providing '$1' to your package lists."
         exit 1
     fi
 }
 
 download_logo() {
     URL="$1"; DEST="$2"; OUT="$3"
-    echo "    Downloading: ${URL}"
+    echo "I: downloading logo: ${URL}"
     if curl -fsSL --connect-timeout 15 --max-time 30 "${URL}" -o "${DEST}" 2>/dev/null; then
         if rsvg-convert -w 600 -h 200 "${DEST}" -o "${OUT}" 2>/dev/null; then
-            echo "    Logo downloaded and converted."
+            echo "I: logo downloaded and converted."
             return 0
         fi
     fi
-    echo "    WARNING: Download failed — generating fallback logo with ImageMagick."
+    echo "W: logo download failed -- generating ImageMagick fallback."
     convert -size 600x200 xc:"${MSE_BG_COLOUR}" \
         -fill "${MSE_ACCENT_COLOUR}" \
         -font DejaVu-Sans-Bold \
@@ -75,25 +82,29 @@ download_logo() {
 # PART 0: Verify tools and prepare workspace
 # =============================================================================
 
-echo "==> [0/3] Checking tools..."
+echo "P: 93-mse_wallpaper.chroot | checking tools."
 require_tool curl
 require_tool convert       # imagemagick
 require_tool rsvg-convert  # librsvg2-bin
 
-mkdir -p "${WORK_DIR}" "${WALLPAPER_DIR}" "${DCONF_DIR}" "${DCONF_LOCKS_DIR}"
+for D in "${WORK_DIR}" "$(dirname ${WALLPAPER_FILE})" "${DCONF_LOCKS_DIR}"; do
+    if [ ! -d "${D}" ]; then
+        mkdir -p "${D}"
+    fi
+done
 
 # =============================================================================
 # PART 1: Download MSE logo
 # =============================================================================
 
-echo "==> [1/3] Downloading MSE logo..."
+echo "P: 93-mse_wallpaper.chroot | downloading MSE logo."
 download_logo "${LOGO_SVG_URL}" "${LOGO_SVG}" "${LOGO_PNG}"
 
 # =============================================================================
 # PART 2: Generate GNOME wallpaper
 # =============================================================================
 
-echo "==> [2/3] Generating GNOME wallpaper (${WALLPAPER_WIDTH}x${WALLPAPER_HEIGHT})..."
+echo "P: 93-mse_wallpaper.chroot | generating wallpaper (${WALLPAPER_WIDTH}x${WALLPAPER_HEIGHT})."
 
 convert \
     -size "${WALLPAPER_WIDTH}x${WALLPAPER_HEIGHT}" \
@@ -108,24 +119,26 @@ convert \
     -annotate +0+60 "${WALLPAPER_TEXT}" \
     "${WALLPAPER_FILE}"
 
-echo "    Wallpaper: ${WALLPAPER_FILE}"
+echo "I: wallpaper written: ${WALLPAPER_FILE}"
 
 # =============================================================================
 # PART 3: Install wallpaper dconf keyfile + locks
+# The picture-uri value uses the RUNTIME path (no FS_ROOT_DIR), because it is
+# read on the booted system where no test prefix exists.
 # =============================================================================
 
-echo "==> [3/3] Installing wallpaper dconf config..."
+echo "P: 93-mse_wallpaper.chroot | installing wallpaper dconf config."
 
 cat > "${DCONF_DIR}/01-mse-wallpaper" << DCONF_EOF
 [org/gnome/desktop/background]
-picture-uri='file://${WALLPAPER_FILE}'
-picture-uri-dark='file://${WALLPAPER_FILE}'
+picture-uri='file://${RT_WALLPAPER_FILE}'
+picture-uri-dark='file://${RT_WALLPAPER_FILE}'
 picture-options='zoom'
 primary-color='${MSE_BG_COLOUR}'
 secondary-color='${MSE_BG_COLOUR}'
 
 [org/gnome/desktop/screensaver]
-picture-uri='file://${WALLPAPER_FILE}'
+picture-uri='file://${RT_WALLPAPER_FILE}'
 primary-color='${MSE_BG_COLOUR}'
 DCONF_EOF
 
@@ -136,12 +149,12 @@ cat > "${DCONF_LOCKS_DIR}/mse-wallpaper-locks" << 'LOCKS_EOF'
 /org/gnome/desktop/screensaver/picture-uri
 LOCKS_EOF
 
-echo "    dconf keyfile: ${DCONF_DIR}/01-mse-wallpaper"
-echo "    dconf locks:   ${DCONF_LOCKS_DIR}/mse-wallpaper-locks"
+echo "I: dconf keyfile: ${DCONF_DIR}/01-mse-wallpaper"
+echo "I: dconf locks:   ${DCONF_LOCKS_DIR}/mse-wallpaper-locks"
 
 # =============================================================================
 # CLEANUP
 # =============================================================================
 
 rm -rf "${WORK_DIR}"
-echo "==> MSE wallpaper configuration complete."
+echo "P: 93-mse_wallpaper.chroot | complete."

@@ -1,22 +1,38 @@
 #!/bin/sh
 # 88-mse_setup_users.chroot
 #
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
+#
 # Uses live-config's own debconf/user-setup infrastructure to configure users:
 #
-#   - Runs a live-config hook at 0020 (before 0030-user-setup) to inject the
-#     hashed password for "user" via debconf-set-selections, exactly as
+#   - Installs a live-config hook at 0020 (before 0030-user-setup) to inject
+#     the hashed password for "user" via debconf-set-selections, exactly as
 #     0030-user-setup does internally with its default password.
 #
-#   - Runs a live-config hook at 1000 (after 0030) to create "sysadmin" and
-#     set its password via usermod with the pre-hashed password.
+#   - Installs a live-config hook at 1000 (after 0030) to create "sysadmin"
+#     and set its password via chpasswd -e with the pre-hashed password.
 #
 #   - Disables 0040-sudo and installs a clean sudoers policy.
 #
 # Passwords are hashed on the BUILD HOST in functions.sh build_image() before
-# lb build runs. The hashes are placed in /etc/mse/ via
+# lb build runs. The hashes are placed under the hash dir via
 # includes.chroot_before_packages and read here. This avoids the problem of
 # chroot hooks not having access to host environment variables.
-# Cleartext passwords never enter the chroot — only yescrypt hashes.
+# Cleartext passwords never enter the chroot -- only yescrypt hashes.
+#
+# Log prefixes: E: error, W: warning, I: info, P: progress/phase.
+#
+# PATH CONVENTION
+#   FS_ROOT_DIR ....... build-time prefix. "" = production (real root),
+#                       e.g. /tmp/test = local testing. Applied to every path
+#                       THIS hook writes to during the chroot stage.
+#   RT_* .............. RUNTIME paths (always real root, never prefixed). Used
+#                       for values embedded INSIDE the generated boot hooks,
+#                       because those run at boot where no test prefix exists.
+#   *_PLACEHOLDER ..... token substituted into a boot-hook body via sed after
+#                       the heredoc is written (values not known inside a
+#                       quoted heredoc).
 
 set -e
 
@@ -24,43 +40,88 @@ set -e
 # CONFIGURATION — edit here only
 # =============================================================================
 
+# ---- Build-time filesystem prefix -------------------------------------------
+# Production: "" -> real root. Testing: FS_ROOT_DIR=/tmp/test ./88-....chroot
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
+
+# ---- Identity ----------------------------------------------------------------
 LIVE_USER="user"
 ADMIN_USER="sysadmin"
 ADMIN_USER_GECOS="System Administrator"
 ADMIN_USER_SHELL="/bin/bash"
 
-LIVE_CONFIG_DIR="/lib/live/config"
-SUDOERS_FILE="/etc/sudoers.d/mse-exam"
-LIVE_CONF_DIR="/etc/live/config.conf.d"
-LIVE_CONF_FILE="${LIVE_CONF_DIR}/mse-exam.conf"
+# ---- Runtime path constants (real root; used at boot / inside boot hooks) ----
+# These must NOT carry FS_ROOT_DIR: they are referenced by the live-config
+# boot hooks and by values that resolve on the booted exam system.
+RT_LIVE_CONFIG_DIR="/lib/live/config"
+RT_HASH_DIR="/etc/mse"
+RT_USER_HASH_FILE="${RT_HASH_DIR}/user.hash"
+RT_ADMIN_HASH_FILE="${RT_HASH_DIR}/admin.hash"
+RT_ADMIN_BOOT_HASH_FILE="${RT_HASH_DIR}/admin_boot.hash"
+RT_SUDOERS_FILE="/etc/sudoers.d/mse-exam"
+RT_SUDOERS_LIVE_FILE="/etc/sudoers.d/live"
+RT_SUDOERS_DIR="/etc/sudoers.d"
+RT_LIVE_CONF_DIR="/etc/live/config.conf.d"
+RT_LIVE_CONF_FILE="${RT_LIVE_CONF_DIR}/mse-exam.conf"
+RT_STATE_DIR="/var/lib/live/config"
+RT_LIVE_CONFIG_SH="/usr/lib/live/config.sh"
 
-# Hash files written by functions.sh on the host before lb build
-HASH_DIR="/etc/mse"
+# Temp file used inside the 0020 boot hook (runtime tmp)
+RT_DEBCONF_TMP="/tmp/mse-passwd.cfg"
+
+# ---- Boot-hook install locations (build-time WRITE paths, prefixed) ----------
+PRE_HOOK="${FS_ROOT_DIR}${RT_LIVE_CONFIG_DIR}/0020-mse-user-password"
+POST_HOOK="${FS_ROOT_DIR}${RT_LIVE_CONFIG_DIR}/1000-mse-adduser"
+
+# ---- Other build-time WRITE paths (prefixed) --------------------------------
+HASH_DIR="${FS_ROOT_DIR}${RT_HASH_DIR}"
 LIVE_USER_HASH_FILE="${HASH_DIR}/user.hash"
 ADMIN_USER_HASH_FILE="${HASH_DIR}/admin.hash"
+ADMIN_BOOT_HASH_FILE="${HASH_DIR}/admin_boot.hash"
+
+LIVE_CONFIG_DIR="${FS_ROOT_DIR}${RT_LIVE_CONFIG_DIR}"
+SUDOERS_DIR="${FS_ROOT_DIR}${RT_SUDOERS_DIR}"
+SUDOERS_FILE="${FS_ROOT_DIR}${RT_SUDOERS_FILE}"
+LIVE_CONF_DIR="${FS_ROOT_DIR}${RT_LIVE_CONF_DIR}"
+LIVE_CONF_FILE="${LIVE_CONF_DIR}/mse-exam.conf"
+
+# ---- Placeholder tokens (substituted into boot-hook bodies via sed) ----------
+PH_ADMIN_USER="ADMIN_USER_PLACEHOLDER"
+PH_ADMIN_GECOS="ADMIN_GECOS_PLACEHOLDER"
+PH_ADMIN_SHELL="ADMIN_SHELL_PLACEHOLDER"
+PH_LIVE_USER="LIVE_USER_PLACEHOLDER"
+PH_HASH_FILE="HASH_FILE_PLACEHOLDER"
+PH_ADMIN_HASH_FILE="ADMIN_HASH_FILE_PLACEHOLDER"
+PH_STATE_DIR="STATE_DIR_PLACEHOLDER"
+PH_HASH_DIR="HASH_DIR_PLACEHOLDER"
+PH_SUDOERS_LIVE="SUDOERS_LIVE_PLACEHOLDER"
+PH_DEBCONF_TMP="DEBCONF_TMP_PLACEHOLDER"
+PH_CONFIG_SH="CONFIG_SH_PLACEHOLDER"
 
 # =============================================================================
-# DERIVED PATHS — do not edit
+# HELPERS
 # =============================================================================
 
-PRE_HOOK="${LIVE_CONFIG_DIR}/0020-mse-user-password"
-POST_HOOK="${LIVE_CONFIG_DIR}/1000-mse-adduser"
+ensure_dir() {
+    # Create a directory only if it does not already exist.
+    if [ ! -d "$1" ]; then
+        mkdir -p "$1"
+    fi
+}
 
 # =============================================================================
 # PART 1: Read pre-generated password hashes
 # Hashes were generated on the host by functions.sh build_image() and placed
-# in /etc/mse/ via includes.chroot_before_packages before lb build ran.
+# under the hash dir via includes.chroot_before_packages before lb build ran.
 # =============================================================================
 
-echo "==> [1/4] Reading pre-generated password hashes..."
+echo "P: 88-mse_setup_users.chroot | reading pre-generated password hashes."
 
 if [ ! -f "${LIVE_USER_HASH_FILE}" ] || [ ! -f "${ADMIN_USER_HASH_FILE}" ]; then
-    echo "ERROR: Password hash files not found in ${HASH_DIR}."
-    echo "       Ensure MSE_USER_PASSWORD and MSE_ADMIN_PASSWORD are set in"
-    echo "       constants and that functions.sh generated the hashes before"
-    echo "       lb build ran. Hash files should be at:"
-    echo "         config/includes.chroot_before_packages/etc/mse/user.hash"
-    echo "         config/includes.chroot_before_packages/etc/mse/admin.hash"
+    echo "E: password hash files not found in ${HASH_DIR}."
+    echo "E: ensure MSE_USER_PASSWORD and MSE_ADMIN_PASSWORD are set in constants"
+    echo "E: and that functions.sh generated the hashes before lb build ran."
+    echo "E: expected: config/includes.chroot_before_packages${RT_HASH_DIR}/{user,admin}.hash"
     exit 1
 fi
 
@@ -68,114 +129,113 @@ LIVE_USER_HASH=$(cat "${LIVE_USER_HASH_FILE}")
 ADMIN_USER_HASH=$(cat "${ADMIN_USER_HASH_FILE}")
 
 if [ -z "${LIVE_USER_HASH}" ] || [ -z "${ADMIN_USER_HASH}" ]; then
-    echo "ERROR: Hash files exist but are empty. Re-run the build."
+    echo "E: hash files exist but are empty. Re-run the build."
     exit 1
 fi
 
-echo "    Hash read for '${LIVE_USER}'."
-echo "    Hash read for '${ADMIN_USER}'."
+echo "I: hash read for '${LIVE_USER}'."
+echo "I: hash read for '${ADMIN_USER}'."
 
 # =============================================================================
-# PART 2: Install 0020-mse-user-password
-# Runs BEFORE 0030-user-setup. Injects our hash into debconf so that
-# user-setup-apply picks it up instead of the default "live" password.
-# Mirrors exactly what 0030-user-setup does internally.
+# PART 2: Install 0020-mse-user-password (runs BEFORE 0030-user-setup)
+# Injects our hash into debconf so user-setup-apply picks it up instead of the
+# default "live" password. The hash stays in a file (contains $ chars that a
+# heredoc would shell-expand); the boot hook reads it at runtime.
 # =============================================================================
 
-echo "==> [2/4] Installing pre-hook ${PRE_HOOK}..."
+echo "P: 88-mse_setup_users.chroot | installing pre-hook ${PRE_HOOK}."
 
-mkdir -p "${LIVE_CONFIG_DIR}"
-
-# Keep user hash in file — hash contains $ chars that get shell-expanded
-# if embedded directly in a heredoc script.
-# The file /etc/mse/user.hash persists (from includes.chroot_before_packages)
-# and is read at runtime by the boot hook.
+ensure_dir "${LIVE_CONFIG_DIR}"
 
 cat > "${PRE_HOOK}" << 'BOOTEOF'
 #!/bin/sh
-# 0020-mse-user-password — live-config hook
+# 0020-mse-user-password -- live-config hook
 # Injects the MSE exam password hash into debconf before 0030-user-setup runs.
-# Hash is read from /etc/mse/user.hash — written at build time via printf
-# to avoid $ expansion. debconf-set-selections receives it via a temp file.
+# Hash is read from the hash file (written at build time via printf to avoid
+# $ expansion). debconf-set-selections receives it via a temp file.
 
-. /usr/lib/live/config.sh
+. CONFIG_SH_PLACEHOLDER
 
-STAMP="/var/lib/live/config/0020-mse-user-password"
+STAMP="STATE_DIR_PLACEHOLDER/0020-mse-user-password"
 [ -e "${STAMP}" ] && exit 0
 
-HASH_FILE="/etc/mse/user.hash"
+HASH_FILE="HASH_FILE_PLACEHOLDER"
 if [ ! -f "${HASH_FILE}" ]; then
-    echo "ERROR: User hash file not found: ${HASH_FILE}"
+    echo "E: user hash file not found: ${HASH_FILE}"
     exit 1
 fi
 
-# Read hash — contains $ chars, so use cat into variable
+# Read hash -- contains $ chars, so use cat into variable
 LIVE_USER_HASH=$(cat "${HASH_FILE}")
 
-echo "MSE: injecting user password hash into debconf..."
+echo "I: injecting user password hash into debconf."
 
 # Write debconf selections via printf to avoid any $ interpretation
 printf "user-setup passwd/user-password-crypted password %s\n" "${LIVE_USER_HASH}" \
-    > /tmp/mse-passwd.cfg
+    > DEBCONF_TMP_PLACEHOLDER
 printf "live-debconfig live-debconfig/passwd/user-password-crypted password %s\n" "${LIVE_USER_HASH}" \
-    >> /tmp/mse-passwd.cfg
+    >> DEBCONF_TMP_PLACEHOLDER
 
-debconf-set-selections /tmp/mse-passwd.cfg
-rm -f /tmp/mse-passwd.cfg
+debconf-set-selections DEBCONF_TMP_PLACEHOLDER
+rm -f DEBCONF_TMP_PLACEHOLDER
 
-echo "MSE: password hash injected."
+echo "I: password hash injected."
 
 # Clean up hash file after use
 rm -f "${HASH_FILE}"
-rmdir /etc/mse 2>/dev/null || true
+rmdir HASH_DIR_PLACEHOLDER 2>/dev/null || true
 
-mkdir -p /var/lib/live/config
+mkdir -p STATE_DIR_PLACEHOLDER
 touch "${STAMP}"
 BOOTEOF
 
-chmod 755 "${PRE_HOOK}"
+# Substitute runtime paths into the boot-hook body
+sed -i \
+    -e "s|${PH_CONFIG_SH}|${RT_LIVE_CONFIG_SH}|g" \
+    -e "s|${PH_STATE_DIR}|${RT_STATE_DIR}|g" \
+    -e "s|${PH_HASH_FILE}|${RT_USER_HASH_FILE}|g" \
+    -e "s|${PH_HASH_DIR}|${RT_HASH_DIR}|g" \
+    -e "s|${PH_DEBCONF_TMP}|${RT_DEBCONF_TMP}|g" \
+    "${PRE_HOOK}"
 
 chmod 755 "${PRE_HOOK}"
-echo "    Installed: ${PRE_HOOK}"
+echo "I: installed: ${PRE_HOOK}"
 
 # =============================================================================
-# PART 3: Install 1000-mse-adduser
-# Runs AFTER 0030-user-setup. Creates sysadmin and sets its password
-# directly via usermod. Also cleans up sudo artefacts from 0040-sudo.
+# PART 3: Install 1000-mse-adduser (runs AFTER 0030-user-setup)
+# Creates sysadmin and sets its password via chpasswd -e. Also cleans up sudo
+# artefacts from 0040-sudo. The admin hash is written to a file with printf
+# (no $ expansion), read at boot.
 # =============================================================================
 
-echo "==> [3/4] Installing post-hook ${POST_HOOK}..."
+echo "P: 88-mse_setup_users.chroot | installing post-hook ${POST_HOOK}."
 
-# The hash contains $ characters (yescrypt: $y$j9T$...) that would be
-# expanded by the shell if embedded directly in the script via heredoc.
-# Write the hash to a separate file with printf (no expansion), then
-# use chpasswd -e to read it — completely avoiding $ interpretation.
-ADMIN_HASH_BOOT="/etc/mse/admin_boot.hash"
-mkdir -p /etc/mse
-printf '%s' "${ADMIN_USER_HASH}" > "${ADMIN_HASH_BOOT}"
-chmod 600 "${ADMIN_HASH_BOOT}"
+ensure_dir "${HASH_DIR}"
+printf '%s' "${ADMIN_USER_HASH}" > "${ADMIN_BOOT_HASH_FILE}"
+chmod 600 "${ADMIN_BOOT_HASH_FILE}"
 
 cat > "${POST_HOOK}" << 'BOOTEOF'
 #!/bin/sh
-# 1000-mse-adduser — live-config hook
-# Creates sysadmin user and sets its password after live user exists.
-# Password hash is read from /etc/mse/admin_boot.hash (written at build
-# time via printf to avoid $ expansion). chpasswd -e writes it directly
-# to /etc/shadow without shell re-interpretation.
+# 1000-mse-adduser -- live-config hook
+# Creates sysadmin user and sets its password after the live user exists.
+# Password hash is read from the admin boot hash file (written at build time
+# via printf to avoid $ expansion). chpasswd -e writes it directly to
+# /etc/shadow without shell re-interpretation.
 
-STAMP="/var/lib/live/config/1000-mse-adduser"
+STAMP="STATE_DIR_PLACEHOLDER/1000-mse-adduser"
 [ -e "${STAMP}" ] && exit 0
 
 ADMIN_USER="ADMIN_USER_PLACEHOLDER"
 ADMIN_USER_GECOS="ADMIN_GECOS_PLACEHOLDER"
 ADMIN_USER_SHELL="ADMIN_SHELL_PLACEHOLDER"
 LIVE_USER="LIVE_USER_PLACEHOLDER"
-ADMIN_HASH_FILE="/etc/mse/admin_boot.hash"
+ADMIN_HASH_FILE="ADMIN_HASH_FILE_PLACEHOLDER"
+SUDOERS_LIVE_FILE="SUDOERS_LIVE_PLACEHOLDER"
 
-echo "MSE: creating sysadmin user..."
+echo "I: creating sysadmin user."
 
 if [ ! -f "${ADMIN_HASH_FILE}" ]; then
-    echo "ERROR: Admin hash file not found: ${ADMIN_HASH_FILE}"
+    echo "E: admin hash file not found: ${ADMIN_HASH_FILE}"
     exit 1
 fi
 
@@ -186,59 +246,64 @@ if ! id "${ADMIN_USER}" >/dev/null 2>&1; then
         --comment "${ADMIN_USER_GECOS}" \
         --groups sudo \
         "${ADMIN_USER}"
-    echo "  Created '${ADMIN_USER}'."
+    echo "I: created '${ADMIN_USER}'."
 else
     usermod -aG sudo "${ADMIN_USER}"
-    echo "  Updated '${ADMIN_USER}'."
+    echo "I: updated '${ADMIN_USER}'."
 fi
 
-# Use chpasswd -e to set pre-hashed password directly into /etc/shadow
-# This avoids any shell expansion of $ characters in the hash
+# chpasswd -e sets the pre-hashed password directly into /etc/shadow,
+# avoiding any shell expansion of $ characters in the hash.
 ADMIN_HASH=$(cat "${ADMIN_HASH_FILE}")
 printf '%s:%s\n' "${ADMIN_USER}" "${ADMIN_HASH}" | chpasswd -e
-echo "  Password set for '${ADMIN_USER}' via chpasswd -e."
+echo "I: password set for '${ADMIN_USER}' via chpasswd -e."
 
 # Remove live user from sudo group (exam safety)
 if groups "${LIVE_USER}" 2>/dev/null | grep -q sudo; then
     gpasswd -d "${LIVE_USER}" sudo 2>/dev/null || true
-    echo "  Removed '${LIVE_USER}' from sudo group."
+    echo "I: removed '${LIVE_USER}' from sudo group."
 fi
 
-# Remove /etc/sudoers.d/live written by 0040-sudo if it slipped through
-if [ -f /etc/sudoers.d/live ]; then
-    rm -f /etc/sudoers.d/live
-    echo "  Removed /etc/sudoers.d/live."
+# Remove sudoers.d/live written by 0040-sudo if it slipped through
+if [ -f "${SUDOERS_LIVE_FILE}" ]; then
+    rm -f "${SUDOERS_LIVE_FILE}"
+    echo "I: removed ${SUDOERS_LIVE_FILE}."
 fi
 
 # Clean up hash file
 rm -f "${ADMIN_HASH_FILE}"
-rmdir /etc/mse 2>/dev/null || true
+rmdir HASH_DIR_PLACEHOLDER 2>/dev/null || true
 
-echo "  Groups: ${LIVE_USER}=$(groups ${LIVE_USER} 2>/dev/null)"
-echo "  Groups: ${ADMIN_USER}=$(groups ${ADMIN_USER} 2>/dev/null)"
-echo "MSE: sysadmin setup complete."
+echo "I: groups: ${LIVE_USER}=$(groups ${LIVE_USER} 2>/dev/null)"
+echo "I: groups: ${ADMIN_USER}=$(groups ${ADMIN_USER} 2>/dev/null)"
+echo "I: sysadmin setup complete."
 
-mkdir -p /var/lib/live/config
+mkdir -p STATE_DIR_PLACEHOLDER
 touch "${STAMP}"
 BOOTEOF
 
-# Replace placeholder strings with actual values
-sed -i "s|ADMIN_USER_PLACEHOLDER|${ADMIN_USER}|g" "${POST_HOOK}"
-sed -i "s|ADMIN_GECOS_PLACEHOLDER|${ADMIN_USER_GECOS}|g" "${POST_HOOK}"
-sed -i "s|ADMIN_SHELL_PLACEHOLDER|${ADMIN_USER_SHELL}|g" "${POST_HOOK}"
-sed -i "s|LIVE_USER_PLACEHOLDER|${LIVE_USER}|g" "${POST_HOOK}"
-chmod 755 "${POST_HOOK}"
+# Substitute placeholders into the boot-hook body
+sed -i \
+    -e "s|${PH_ADMIN_USER}|${ADMIN_USER}|g" \
+    -e "s|${PH_ADMIN_GECOS}|${ADMIN_USER_GECOS}|g" \
+    -e "s|${PH_ADMIN_SHELL}|${ADMIN_USER_SHELL}|g" \
+    -e "s|${PH_LIVE_USER}|${LIVE_USER}|g" \
+    -e "s|${PH_ADMIN_HASH_FILE}|${RT_ADMIN_BOOT_HASH_FILE}|g" \
+    -e "s|${PH_SUDOERS_LIVE}|${RT_SUDOERS_LIVE_FILE}|g" \
+    -e "s|${PH_STATE_DIR}|${RT_STATE_DIR}|g" \
+    -e "s|${PH_HASH_DIR}|${RT_HASH_DIR}|g" \
+    "${POST_HOOK}"
 
 chmod 755 "${POST_HOOK}"
-echo "    Installed: ${POST_HOOK}"
+echo "I: installed: ${POST_HOOK}"
 
 # =============================================================================
 # PART 4: Sudoers policy + disable 0040-sudo
 # =============================================================================
 
-echo "==> [4/4] Installing sudoers policy and disabling 0040-sudo..."
+echo "P: 88-mse_setup_users.chroot | installing sudoers policy, disabling 0040-sudo."
 
-mkdir -p /etc/sudoers.d
+ensure_dir "${SUDOERS_DIR}"
 
 cat > "${SUDOERS_FILE}" << EOF
 # MSE Exam sudoers policy
@@ -252,31 +317,36 @@ ${LIVE_USER} ALL=(ALL) !ALL
 EOF
 
 chmod 0440 "${SUDOERS_FILE}"
-chown root:root "${SUDOERS_FILE}"
-visudo -c -f "${SUDOERS_FILE}"
-echo "    Sudoers policy validated: ${SUDOERS_FILE}"
+chown root:root "${SUDOERS_FILE}" 2>/dev/null || true
 
-mkdir -p "${LIVE_CONF_DIR}"
+# visudo validates against the real system; skip in test mode.
+if [ -z "${FS_ROOT_DIR}" ]; then
+    visudo -c -f "${SUDOERS_FILE}"
+    echo "I: sudoers policy validated: ${SUDOERS_FILE}"
+else
+    echo "W: FS_ROOT_DIR set -- skipping visudo validation in test mode."
+fi
 
-cat > "${LIVE_CONF_FILE}" << 'EOF'
+ensure_dir "${LIVE_CONF_DIR}"
+
+cat > "${LIVE_CONF_FILE}" << EOF
 # MSE Exam live-config overrides
 # Disables 0040-sudo which grants live user NOPASSWD sudo access.
-# Sudo policy is managed via ${SUDOERS_FILE} instead.
-LIVE_CONFIG_NOCOMPONENTS="${LIVE_CONFIG_NOCOMPONENTS},sudo"
+# Sudo policy is managed via ${RT_SUDOERS_FILE} instead.
+LIVE_CONFIG_NOCOMPONENTS="sudo"
 EOF
 
-echo "    0040-sudo disabled via: ${LIVE_CONF_FILE}"
+echo "I: 0040-sudo disabled via: ${LIVE_CONF_FILE}"
 
 # =============================================================================
-# CLEANUP: Remove hash files — must not persist in the live image
+# CLEANUP: Remove build-time admin.hash (must not persist in the live image)
+# user.hash must NOT be removed here -- it is read at boot by
+# 0020-mse-user-password, which cleans it up after use.
 # =============================================================================
 
-echo "==> Cleaning up build-time hash files..."
-# admin.hash is no longer needed — we wrote admin_boot.hash via printf
-# user.hash must NOT be removed here — it is needed at boot by
-# /lib/live/config/0020-mse-user-password which runs before login.
-# 0020-mse-user-password cleans it up after use.
+echo "P: 88-mse_setup_users.chroot | cleaning up build-time hash files."
+
 rm -f "${ADMIN_USER_HASH_FILE}"
-echo "    admin.hash removed (admin_boot.hash written for boot hook)."
+echo "I: admin.hash removed (admin_boot.hash written for boot hook)."
 
-echo "==> setup_users hook complete."
+echo "P: 88-mse_setup_users.chroot | complete."

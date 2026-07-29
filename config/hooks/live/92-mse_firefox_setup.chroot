@@ -1,6 +1,9 @@
 #!/bin/sh
 # 92-mse_firefox_setup.chroot
 #
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
+#
 # Configures Firefox ESR for the MSE exam environment:
 #   1. System-wide enterprise policy (policies.json)
 #   2. Shared Firefox profile (profiles.ini + user.js)
@@ -56,6 +59,18 @@ ICON_FILEDROP="${ICON_DIR}/mse-filedrop.png"
 POLICY_FILE="${FS_ROOT_DIR}/usr/lib/firefox-esr/distribution/policies.json"
 POLICY_LINK_DIR="${FS_ROOT_DIR}/etc/firefox-esr/policies"
 
+# Autoconfig — applies prefs to EVERY profile regardless of name/path.
+# The .cfg lives in the firefox-esr install dir; a pref file in defaults/pref
+# enables it. This is the profile-independent safety net.
+FF_INSTALL_DIR="${FS_ROOT_DIR}/usr/lib/firefox-esr"
+FF_AUTOCONFIG_CFG="${FF_INSTALL_DIR}/mse.cfg"
+FF_AUTOCONFIG_PREF="${FF_INSTALL_DIR}/defaults/pref/autoconfig.js"
+
+# Vendor-path symlink: make ~/.mozilla/firefox-esr resolve to the real
+# ~/.mozilla/firefox profile root, so the profile is found no matter which
+# vendor path firefox-esr resolves to.
+FF_ESR_SKEL_LINK="${FS_ROOT_DIR}/etc/skel/.mozilla/firefox-esr"
+
 # Desktop launchers (installed in /usr/share/applications/ for GNOME trust)
 LAUNCHER_MOODLE="${FS_ROOT_DIR}/usr/share/applications/mse-moodle.desktop"
 LAUNCHER_FILEDROP="${FS_ROOT_DIR}/usr/share/applications/mse-filedrop.desktop"
@@ -98,7 +113,7 @@ RT_LAUNCHER_FILEDROP="/usr/share/applications/mse-filedrop.desktop"
 # =============================================================================
 echo "P: 92-mse_firefox_setup.chroot | Firefox setup start."
 
-echo "I: Writing Firefox enterprise policy..."
+echo "I: Writing Firefox enterprise policy."
 
 mkdir -p "$(dirname ${POLICY_FILE})"
 
@@ -170,7 +185,7 @@ echo "    Symlinked: ${POLICY_LINK_DIR}/policies.json -> ${POLICY_FILE}"
 # PART 2: Firefox exam profile (profiles.ini + user.js)
 # =============================================================================
 
-echo "I: Creating Firefox exam profile..."
+echo "I: Creating Firefox exam profile."
 
 mkdir -p "${FF_PROFILE_DIR}"
 
@@ -227,13 +242,13 @@ user_pref("browser.startup.page",                      0);
 // Prevents the translation popup/offer from appearing on foreign-language pages.
 user_pref("browser.translations.enable",               false);
 user_pref("browser.translations.automaticallyPopup",   false);
-user_pref("browser.translations.panelShown",           false);
+user_pref("browser.translations.panelShown",           true);
 
 // --- Private browsing info page: fully suppressed ---
 // Firefox tries to open https://www.mozilla.org/privacy/firefox/ and the
 // private-browsing "about" page on private-window start. Both are blocked
 // by the firewall and show an error tab. These prefs prevent them opening.
-user_pref("browser.privatebrowsing.welcomeShown",      false);
+user_pref("browser.privatebrowsing.welcomeShown",      true);
 user_pref("browser.privatebrowsing.vpnpromourl",       "");
 user_pref("browser.privatebrowsing.promoEnabled",      false);
 user_pref("browser.privatebrowsing.infoEnabled",       false);
@@ -245,7 +260,7 @@ user_pref("extensions.pocket.enabled",                 false);
 // --- Telemetry & first-run noise ---
 user_pref("toolkit.telemetry.enabled",                 false);
 user_pref("browser.startup.firstrunSkipsHomepage",     true);
-user_pref("trailhead.firstrun.didSeeAboutWelcome",     false);
+user_pref("trailhead.firstrun.didSeeAboutWelcome",     true);
 user_pref("datareporting.healthreport.uploadEnabled",  false);
 user_pref("datareporting.policy.dataSubmissionEnabled", false);
 user_pref("app.shield.optoutstudies.enabled",          false);
@@ -255,13 +270,94 @@ user_pref("browser.rights.3.shown",                    true);
 user_pref("browser.shell.checkDefaultBrowser",         false);
 EOF
 
-echo "    user.js written: ${FF_USER_JS}"
+echo "I: user.js written: ${FF_USER_JS}"
+
+# =============================================================================
+# PART 2b: Autoconfig — profile-independent prefs (belt & suspenders)
+# =============================================================================
+# The named profile (profiles.ini) is fragile: firefox vs firefox-esr can
+# resolve a different profile root, and if profiles.ini isn't matched the
+# exam profile (and its user.js) is silently ignored. Autoconfig runs for
+# EVERY profile at startup, so the must-apply private-browsing prefs are
+# enforced regardless of which profile Firefox actually uses.
+#
+# lockPref() makes a value immutable (greyed out in about:config).
+
+echo "P: 92-mse_firefox_setup.chroot | installing Firefox autoconfig."
+
+if [ ! -d "$(dirname ${FF_AUTOCONFIG_PREF})" ]; then
+    mkdir -p "$(dirname ${FF_AUTOCONFIG_PREF})"
+fi
+if [ ! -d "${FF_INSTALL_DIR}" ]; then
+    mkdir -p "${FF_INSTALL_DIR}"
+fi
+
+# Enabler pref file — names the .cfg and disables obfuscation/sandbox so the
+# plain-text .cfg is read.
+cat > "${FF_AUTOCONFIG_PREF}" << 'EOF'
+// MSE exam — enable autoconfig (first line of .cfg is ignored by design)
+pref("general.config.filename", "mse.cfg");
+pref("general.config.obscure_value", 0);
+pref("general.config.sandbox_enabled", false);
+EOF
+
+# The .cfg itself. IMPORTANT: the first line is ALWAYS ignored by Firefox's
+# config parser, so it must be a comment.
+cat > "${FF_AUTOCONFIG_CFG}" << 'EOF'
+// MSE exam autoconfig — DO NOT REMOVE THIS FIRST COMMENT LINE
+// Profile-independent enforcement of the exam private-browsing behaviour.
+
+// --- Private browsing autostart (must always apply) ---
+lockPref("browser.privatebrowsing.autostart", true);
+
+// --- Translations fully disabled ---
+lockPref("browser.translations.enable", false);
+lockPref("browser.translations.automaticallyPopup", false);
+
+// --- Suppress the mozilla.org private-browsing info/promo tab ---
+lockPref("browser.privatebrowsing.welcomeShown", true);
+lockPref("browser.privatebrowsing.vpnpromourl", "");
+lockPref("browser.privatebrowsing.promoEnabled", false);
+lockPref("browser.privatebrowsing.infoEnabled", false);
+lockPref("browser.privatebrowsing.felt.enabled", false);
+lockPref("privacy.trackingprotection.pbmode.enabled", false);
+lockPref("extensions.pocket.enabled", false);
+
+// --- No first-run / homepage noise ---
+lockPref("browser.startup.homepage", "about:blank");
+lockPref("browser.startup.page", 0);
+lockPref("browser.newtabpage.enabled", false);
+lockPref("browser.shell.checkDefaultBrowser", false);
+EOF
+
+echo "I: autoconfig enabler: ${FF_AUTOCONFIG_PREF}"
+echo "I: autoconfig cfg:     ${FF_AUTOCONFIG_CFG}"
+
+# =============================================================================
+# PART 2c: Vendor-path symlink for firefox-esr profile resolution
+# =============================================================================
+# firefox-esr may look for its profile under ~/.mozilla/firefox-esr on some
+# builds. Symlink that to the real ~/.mozilla/firefox so the exam profile is
+# found either way. The link target is RELATIVE ("firefox") so it stays valid
+# inside the user's home after skel is copied.
+
+echo "P: 92-mse_firefox_setup.chroot | linking firefox-esr profile root."
+
+if [ ! -d "$(dirname ${FF_ESR_SKEL_LINK})" ]; then
+    mkdir -p "$(dirname ${FF_ESR_SKEL_LINK})"
+fi
+
+# Remove any stale entry, then create the relative alias.
+rm -f "${FF_ESR_SKEL_LINK}"
+ln -s firefox "${FF_ESR_SKEL_LINK}"
+
+echo "I: symlink: ${FF_ESR_SKEL_LINK} -> firefox"
 
 # =============================================================================
 # PART 3: Two wrapper scripts + two desktop launchers
 # =============================================================================
 
-echo "I: Installing Moodle and FileDrop launchers..."
+echo "I: Installing Moodle and FileDrop launchers."
 
 if [ ! -d "${SCRIPT_DIR}" ]; then
     mkdir -p "${SCRIPT_DIR}"
@@ -357,12 +453,6 @@ Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 EOF
-
-## Make it executable
-if [ -e "${LAUNCHER_MOODLE}" ]; then
-  chmod 755 "${LAUNCHER_MOODLE}"
-fi
-
 echo "I:   Launcher: ${LAUNCHER_MOODLE}"
 
 # --- FileDrop launcher ---
@@ -378,12 +468,6 @@ Terminal=false
 Categories=Network;WebBrowser;
 StartupNotify=true
 EOF
-
-## Make it executable
-if [ -e "${LAUNCHER_FILEDROP}" ]; then
-  chmod 755 "${LAUNCHER_FILEDROP}"
-fi
-
 echo "I:   Launcher: ${LAUNCHER_FILEDROP}"
 
 # --- Symlink both into skel Desktop ---
@@ -396,7 +480,7 @@ echo "I:   Desktop symlinks created for both launchers."
 # PART 4: Trust-launcher autostart
 # =============================================================================
 
-echo "I: Installing trust launcher..."
+echo "I: Installing trust launcher."
 # Dock favorites are configured by 91-mse_dock.chroot.
 
 # --- Trust-launcher script: marks both .desktop files trusted at login ---

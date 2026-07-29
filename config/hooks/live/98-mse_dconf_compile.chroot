@@ -1,18 +1,14 @@
 #!/bin/sh
 # 98-mse_dconf_compile.chroot
 #
-# Installs the shared live-config boot hook 0500-mse-dconf which compiles
-# the dconf database at first boot, AFTER live-config has completed its own
-# GNOME initialisation (otherwise live-config would overwrite our settings).
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
 #
-# This hook is intentionally separate and runs LAST among the MSE dconf
-# producers so it doesn't matter which of them wrote keyfiles — this just
-# installs the compiler. All MSE dconf keyfiles are compiled together:
-#   01-mse-wallpaper  (93-mse_wallpaper.chroot)
-#   02-mse-dock       (91-mse_dock.chroot)
-#   03-mse-keyboard   (96-mse_keyboard.chroot)
+# Ensures the dconf profile loads the local database and installs the shared
+# live-config boot hook 0500-mse-dconf which compiles the dconf database at
+# first boot, after live-config has completed its own GNOME initialisation.
 #
-# Must run after all hooks that write /etc/dconf/db/local.d/ keyfiles.
+# Log prefixes: E: error, W: warning, I: info, P: progress/phase.
 
 set -e
 
@@ -20,52 +16,58 @@ set -e
 # CONFIGURATION — edit here only
 # =============================================================================
 
-LIVE_CONFIG_DIR="/lib/live/config"
+# Filesystem root prefix. Production: "" (real root). Testing: e.g. /tmp/test.
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
+
+# =============================================================================
+# DERIVED PATHS — do not edit
+# =============================================================================
+
+LIVE_CONFIG_DIR="${FS_ROOT_DIR}/lib/live/config"
 DCONF_HOOK="${LIVE_CONFIG_DIR}/0500-mse-dconf"
+DCONF_PROFILE_DIR="${FS_ROOT_DIR}/etc/dconf/profile"
+DCONF_PROFILE="${DCONF_PROFILE_DIR}/user"
 
 # =============================================================================
 # PART 1: Ensure the dconf profile loads the local database
 # =============================================================================
 # Without /etc/dconf/profile/user listing "system-db:local", the local
-# database (where 01-mse-wallpaper, 02-mse-dock, 03-mse-keyboard live)
-# is never consulted, and our settings + locks have no effect.
-# lernstick-theme sets the background via GSettings schema defaults;
-# our locked local-db keys override that ONLY if the profile loads local.
-#
-# Profile order: user db first (runtime changes), then local (our defaults
-# and locks). Locks in local make keys immutable, overriding schema defaults.
+# database (where 01-mse-wallpaper, 02-mse-dock, 03-mse-keyboard live) is
+# never consulted, and our settings + locks have no effect.
 
-echo "==> [1/2] Ensuring dconf profile loads local database..."
+echo "P: 98-mse_dconf_compile.chroot | ensuring dconf profile loads local database."
 
-mkdir -p /etc/dconf/profile
+if [ ! -d "${DCONF_PROFILE_DIR}" ]; then
+    mkdir -p "${DCONF_PROFILE_DIR}"
+fi
 
-cat > /etc/dconf/profile/user << 'PROFILE_EOF'
+cat > "${DCONF_PROFILE}" << 'PROFILE_EOF'
 user-db:user
 system-db:local
 PROFILE_EOF
 
-echo "    Profile written: /etc/dconf/profile/user"
+echo "I: Profile written: ${DCONF_PROFILE}"
 
 # =============================================================================
 # PART 2: Install the live-config dconf compile hook
 # =============================================================================
 
-echo "==> [2/2] Installing live-config dconf compile hook..."
+echo "P: 98-mse_dconf_compile.chroot | installing live-config dconf compile hook."
 
-mkdir -p "${LIVE_CONFIG_DIR}"
+if [ ! -d "${LIVE_CONFIG_DIR}" ]; then
+    mkdir -p "${LIVE_CONFIG_DIR}"
+fi
 
 cat > "${DCONF_HOOK}" << 'HOOK_EOF'
 #!/bin/sh
 # 0500-mse-dconf — live-config hook
 # Compiles all MSE dconf databases at boot, after live-config has completed
-# its own GNOME initialisation. Covers wallpaper, dock, and keyboard keyfiles
-# in /etc/dconf/db/local.d/.
-# Installed by: 98-mse_dconf_compile.chroot
+# its own GNOME initialisation. Installed by: 98-mse_dconf_compile.chroot
 
 STAMP="/var/lib/live/config/0500-mse-dconf"
 [ -e "${STAMP}" ] && exit 0
 
-echo "MSE: compiling dconf database..."
+echo "MSE: compiling dconf database."
 dconf update
 echo "MSE: dconf compiled."
 
@@ -74,5 +76,5 @@ touch "${STAMP}"
 HOOK_EOF
 
 chmod 755 "${DCONF_HOOK}"
-echo "    live-config hook installed: ${DCONF_HOOK}"
-echo "==> MSE dconf compile hook complete."
+echo "I: live-config hook installed: ${DCONF_HOOK}"
+echo "P: 98-mse_dconf_compile.chroot | complete."

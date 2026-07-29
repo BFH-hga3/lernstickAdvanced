@@ -1,7 +1,9 @@
 #!/bin/sh
-# 91-mse_download_template.chroot
+# 90-mse_download_template.chroot
 # Must run before 99-uninstall_packages (uses curl).
-# mse_download_template.hook.chroot
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
 #
 # Consolidates all MSE LibreOffice template setup in one hook:
 #   1. Downloads the exam template from SWITCHdrive (with retries)
@@ -18,16 +20,26 @@ set -e
 # CONFIGURATION — edit here only
 # =============================================================================
 
+# Filesystem root prefix. Production: "" (real root). Testing: e.g. /tmp/test.
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
+
 LIVE_USER="user"
-TEMPLATE_DIR="/usr/local/share/templates"
-TEMPLATE_FILE="${TEMPLATE_DIR}/mse-default.ott"
 TEMPLATE_DEST_NAME="MSE_FullName_ModuleCode.ott"
 NEXTCLOUD_URL="https://drive.switch.ch/index.php/s/tQLKBilUJ7l8DLj/download"
-FETCH_SCRIPT="/usr/local/bin/fetch-template.sh"
-AUTOSTART_ENTRY="/etc/xdg/autostart/fetch-template.desktop"
 MAX_RETRIES=3
 RETRY_DELAY=5
 NM_ONLINE_TIMEOUT=10
+
+# Runtime paths (real root) — used INSIDE generated script + autostart Exec=.
+RT_TEMPLATE_DIR="/usr/local/share/templates"
+RT_TEMPLATE_FILE="${RT_TEMPLATE_DIR}/mse-default.ott"
+RT_FETCH_SCRIPT="/usr/local/bin/fetch-template.sh"
+
+# Write locations (prefixed) — where THIS hook creates files.
+TEMPLATE_DIR="${FS_ROOT_DIR}${RT_TEMPLATE_DIR}"
+TEMPLATE_FILE="${FS_ROOT_DIR}${RT_TEMPLATE_FILE}"
+FETCH_SCRIPT="${FS_ROOT_DIR}${RT_FETCH_SCRIPT}"
+AUTOSTART_ENTRY="${FS_ROOT_DIR}/etc/xdg/autostart/fetch-template.desktop"
 
 # =============================================================================
 # PART 1: Download template with retries, fall back to embedded OTT
@@ -69,21 +81,23 @@ XC60m5jEAAAAjwEAAAgAGAAAAAAAAQAAAKSBpgMAAG1ldGEueG1sVVQFAAMOOV9qdXgLAAEEAAAA
 AAQAAAAAUEsFBgAAAAAGAAYAzwEAAKwEAAAAAA=="
 
 write_fallback() {
-    echo "    Writing embedded minimal OTT fallback..."
+    echo "I: writing embedded minimal OTT fallback."
     echo "${FALLBACK_B64}" | tr -d ' \n' | base64 -d > "${TEMPLATE_FILE}"
-    echo "    Fallback OTT written ($(wc -c < "${TEMPLATE_FILE}") bytes)"
+    echo "I: fallback OTT written ($(wc -c < "${TEMPLATE_FILE}") bytes)"
 }
 
-mkdir -p "${TEMPLATE_DIR}"
+if [ ! -d "${TEMPLATE_DIR}" ]; then
+    mkdir -p "${TEMPLATE_DIR}"
+fi
 
-echo "==> [1/3] Downloading MSE exam template from SWITCHdrive..."
+echo "P: 90-mse_download_template.chroot | downloading MSE exam template."
 
 ATTEMPT=0
 SUCCESS=0
 
 while [ ${ATTEMPT} -lt ${MAX_RETRIES} ]; do
     ATTEMPT=$((ATTEMPT + 1))
-    echo "    Attempt ${ATTEMPT}/${MAX_RETRIES}..."
+    echo "I: attempt ${ATTEMPT}/${MAX_RETRIES}."
 
     if curl -fsSL --connect-timeout 15 --max-time 60 \
         "${NEXTCLOUD_URL}" -o "${TEMPLATE_FILE}.tmp" 2>/dev/null; then
@@ -94,19 +108,19 @@ while [ ${ATTEMPT} -lt ${MAX_RETRIES} ]; do
         if [ -s "${TEMPLATE_FILE}.tmp" ] && [ "${MAGIC}" = "504b" ]; then
             mv "${TEMPLATE_FILE}.tmp" "${TEMPLATE_FILE}"
             SUCCESS=1
-            echo "    Downloaded and validated ($(wc -c < "${TEMPLATE_FILE}") bytes)"
+            echo "I: downloaded and validated ($(wc -c < "${TEMPLATE_FILE}") bytes)"
             break
         else
-            echo "    WARNING: Invalid or empty download (magic=${MAGIC})"
+            echo "W: invalid or empty download (magic=${MAGIC})"
             rm -f "${TEMPLATE_FILE}.tmp"
         fi
     else
-        echo "    WARNING: curl failed on attempt ${ATTEMPT}"
+        echo "W: curl failed on attempt ${ATTEMPT}"
         rm -f "${TEMPLATE_FILE}.tmp"
     fi
 
     if [ ${ATTEMPT} -lt ${MAX_RETRIES} ]; then
-        echo "    Retrying in ${RETRY_DELAY} seconds..."
+        echo "I: retrying in ${RETRY_DELAY} seconds."
         sleep ${RETRY_DELAY}
     fi
 done
@@ -114,7 +128,7 @@ done
 if [ ${SUCCESS} -eq 0 ]; then
     echo ""
     echo "============================================================"
-    echo "WARNING: Download failed after ${MAX_RETRIES} attempts."
+    echo "W: download failed after ${MAX_RETRIES} attempts."
     echo "  URL: ${NEXTCLOUD_URL}"
     echo "  Embedding minimal OTT as safe net."
     echo "  ${FETCH_SCRIPT} will retry at every student login."
@@ -129,9 +143,11 @@ rm -f "${TEMPLATE_FILE}.tmp"
 # PART 2: Install fetch-template.sh (refreshes template at every login)
 # =============================================================================
 
-echo "==> [2/3] Installing ${FETCH_SCRIPT}..."
+echo "P: 90-mse_download_template.chroot | installing ${FETCH_SCRIPT}."
 
-mkdir -p "$(dirname ${FETCH_SCRIPT})"
+if [ ! -d "$(dirname ${FETCH_SCRIPT})" ]; then
+    mkdir -p "$(dirname ${FETCH_SCRIPT})"
+fi
 
 cat > "${FETCH_SCRIPT}" << EOF
 #!/bin/sh
@@ -145,7 +161,7 @@ cat > "${FETCH_SCRIPT}" << EOF
 #
 # --- Properties (inherited from build-time hook configuration) ---
 LIVE_USER="${LIVE_USER}"
-TEMPLATE_LOCAL="${TEMPLATE_FILE}"
+TEMPLATE_LOCAL="${RT_TEMPLATE_FILE}"
 NEXTCLOUD_URL="${NEXTCLOUD_URL}"
 NM_ONLINE_TIMEOUT="${NM_ONLINE_TIMEOUT}"
 
@@ -207,24 +223,26 @@ chown "\${LIVE_USER}:\${LIVE_USER}" "\${TARGET}"
 EOF
 
 chmod +x "${FETCH_SCRIPT}"
-echo "    Installed."
+echo "I: installed ${FETCH_SCRIPT}."
 
 # =============================================================================
 # PART 3: Install XDG autostart entry
 # =============================================================================
 
-echo "==> [3/3] Installing XDG autostart entry..."
+echo "P: 90-mse_download_template.chroot | installing XDG autostart entry."
 
-mkdir -p "$(dirname ${AUTOSTART_ENTRY})"
+if [ ! -d "$(dirname ${AUTOSTART_ENTRY})" ]; then
+    mkdir -p "$(dirname ${AUTOSTART_ENTRY})"
+fi
 
 cat > "${AUTOSTART_ENTRY}" << EOF
 [Desktop Entry]
 Type=Application
 Name=Fetch MSE Template
 Comment=Downloads the MSE exam template from SWITCHdrive at login
-Exec=${FETCH_SCRIPT}
+Exec=${RT_FETCH_SCRIPT}
 X-GNOME-Autostart-enabled=true
 EOF
 
-echo "    Installed: ${AUTOSTART_ENTRY}"
-echo "==> MSE template setup complete."
+echo "I: installed: ${AUTOSTART_ENTRY}"
+echo "P: 90-mse_download_template.chroot | complete."

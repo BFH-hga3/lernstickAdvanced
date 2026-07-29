@@ -1,18 +1,31 @@
 #!/bin/sh
 # 96-mse_keyboard.chroot
 #
-# Configures the GNOME keyboard input sources for the MSE exam environment.
-# Writes the input-sources dconf keyfile + locks so students get Swiss German
-# (ch+de) as the default layout with ch+fr, it and us also available.
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
 #
-# This is SEPARATE from /etc/default/keyboard (set by 15-keyboard.chroot):
-#   - /etc/default/keyboard  → console + X11 base keyboard (TTY, login screen)
-#   - GNOME input-sources     → the layout GNOME actually uses in the session
-# GNOME ignores /etc/default/keyboard for its own session layout, so both
-# are needed.
+# Derives the GNOME keyboard input sources from /etc/default/keyboard at the
+# user's FIRST LOGIN, so there is a single source of truth for the keyboard:
 #
-# dconf is compiled at boot by 0500-mse-dconf (installed by
-# 98-mse_dconf_compile.chroot), NOT here.
+#   /etc/default/keyboard  (written by 15-keyboard.chroot, and possibly
+#                           updated at boot by live-config from a gfxboot/GRUB
+#                           language selection)
+#         │
+#         ▼  read at first login
+#   GNOME input-sources dconf  (applied via gsettings, per user)
+#
+# This means a boot-menu language choice, or any change to
+# /etc/default/keyboard, automatically becomes the GNOME session layout —
+# no hardcoded list in this hook, nothing frozen, candidate can still switch.
+#
+# XKB -> GNOME mapping (per position i in the comma-separated lists):
+#   variant[i] empty      -> ('xkb', 'layout[i]')
+#   variant[i] non-empty  -> ('xkb', 'layout[i]+variant[i]')
+# e.g. XKBLAYOUT="ch,ch,it,us" XKBVARIANT=",fr,," ->
+#      [('xkb','ch'), ('xkb','ch+fr'), ('xkb','it'), ('xkb','us')]
+# (Swiss German is the BARE 'ch' — German is the default variant of ch.)
+#
+# Log prefixes: E: error, W: warning, I: info, P: progress/phase.
 
 set -e
 
@@ -20,39 +33,127 @@ set -e
 # CONFIGURATION — edit here only
 # =============================================================================
 
-# GNOME input sources, in order. First = default.
-# xkb variant 'ch' = Swiss German, 'ch+fr' = Swiss French.
-INPUT_SOURCES="[('xkb', 'ch'), ('xkb', 'ch+fr'), ('xkb', 'it'), ('xkb', 'us')]"
+# Filesystem root prefix. Production: "" (real root). Testing: e.g. /tmp/test.
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
 
 # =============================================================================
 # DERIVED PATHS — do not edit
 # =============================================================================
 
-DCONF_DIR="/etc/dconf/db/local.d"
-DCONF_LOCKS_DIR="${DCONF_DIR}/locks"
+# Runtime paths (real root) — referenced INSIDE the first-login script and the
+# autostart entry, because they resolve on the booted system.
+RT_APPLY_SCRIPT="/usr/local/bin/mse-apply-keyboard.sh"
+RT_KEYBOARD_FILE="/etc/default/keyboard"
+
+# Build-time WRITE locations (prefixed).
+APPLY_SCRIPT="${FS_ROOT_DIR}${RT_APPLY_SCRIPT}"
+AUTOSTART_DIR="${FS_ROOT_DIR}/etc/skel/.config/autostart"
+AUTOSTART_ENTRY="${AUTOSTART_DIR}/mse-apply-keyboard.desktop"
 
 # =============================================================================
-# PART 1: Install keyboard input-sources dconf keyfile + locks
+# PART 1: Install the first-login keyboard-apply script
 # =============================================================================
 
-echo "P:  96-mse_keyboard.chroot -- Installing keyboard input-sources dconf config."
+echo "P: 96-mse_keyboard.chroot | installing keyboard-apply script."
 
-mkdir -p "${DCONF_DIR}" "${DCONF_LOCKS_DIR}"
+if [ ! -d "$(dirname ${APPLY_SCRIPT})" ]; then
+    mkdir -p "$(dirname ${APPLY_SCRIPT})"
+fi
 
-cat > "${DCONF_DIR}/03-mse-keyboard" << DCONF_EOF
-[org/gnome/desktop/input-sources]
-# Swiss German (ch) is first = default keyboard layout.
-sources=${INPUT_SOURCES}
-current=uint32 0
-per-window=false
-show-all-sources=true
-DCONF_EOF
+# The script body is a quoted heredoc; the one build-time value it needs
+# (RT_KEYBOARD_FILE) is substituted via a placeholder after writing.
+cat > "${APPLY_SCRIPT}" << 'SCRIPTEOF'
+#!/bin/sh
+# mse-apply-keyboard.sh
+# Derives the GNOME input-sources from /etc/default/keyboard and applies them
+# via gsettings at first login. Self-removes its autostart entry afterwards.
+# Installed by: 96-mse_keyboard.chroot
 
-cat > "${DCONF_LOCKS_DIR}/mse-keyboard-locks" << 'LOCKS_EOF'
-/org/gnome/desktop/input-sources/sources
-/org/gnome/desktop/input-sources/current
-LOCKS_EOF
+KEYBOARD_FILE="KEYBOARD_FILE_PLACEHOLDER"
+SELF_AUTOSTART="${HOME}/.config/autostart/mse-apply-keyboard.desktop"
 
-echo "    dconf keyfile: ${DCONF_DIR}/03-mse-keyboard"
-echo "    dconf locks:   ${DCONF_LOCKS_DIR}/mse-keyboard-locks"
-echo "P:  96-mse_keyboard.chroot -- MSE keyboard configuration complete."
+# Nothing to do if the source file is missing
+if [ ! -f "${KEYBOARD_FILE}" ]; then
+    echo "W: ${KEYBOARD_FILE} not found -- leaving GNOME keyboard at default."
+    rm -f "${SELF_AUTOSTART}"
+    exit 0
+fi
+
+# Read XKBLAYOUT / XKBVARIANT (shell-sourced key=value file)
+. "${KEYBOARD_FILE}"
+
+if [ -z "${XKBLAYOUT}" ]; then
+    echo "W: XKBLAYOUT empty in ${KEYBOARD_FILE} -- leaving GNOME keyboard at default."
+    rm -f "${SELF_AUTOSTART}"
+    exit 0
+fi
+
+# Build the GNOME input-sources array from XKBLAYOUT + XKBVARIANT.
+# Positional pairing: the i-th layout uses the i-th variant (may be empty).
+RESULT=""
+LI=1
+OLD_IFS="$IFS"
+IFS=','
+# shellcheck disable=SC2086
+set -- ${XKBLAYOUT}
+IFS="$OLD_IFS"
+for LAYOUT in "$@"; do
+    VARIANT=$(echo "${XKBVARIANT}" | cut -d',' -f${LI})
+    if [ -n "${VARIANT}" ]; then
+        ENTRY="('xkb', '${LAYOUT}+${VARIANT}')"
+    else
+        ENTRY="('xkb', '${LAYOUT}')"
+    fi
+    if [ -z "${RESULT}" ]; then
+        RESULT="${ENTRY}"
+    else
+        RESULT="${RESULT}, ${ENTRY}"
+    fi
+    LI=$((LI + 1))
+done
+SOURCES="[${RESULT}]"
+
+echo "I: applying GNOME input-sources: ${SOURCES}"
+
+gsettings set org.gnome.desktop.input-sources sources "${SOURCES}"
+gsettings set org.gnome.desktop.input-sources current "uint32 0"
+gsettings set org.gnome.desktop.input-sources per-window false
+gsettings set org.gnome.desktop.input-sources show-all-sources true
+
+echo "I: GNOME keyboard applied from ${KEYBOARD_FILE}."
+
+# Self-remove the autostart entry — run once only
+rm -f "${SELF_AUTOSTART}"
+SCRIPTEOF
+
+# Substitute the runtime keyboard-file path into the script body
+sed -i "s|KEYBOARD_FILE_PLACEHOLDER|${RT_KEYBOARD_FILE}|g" "${APPLY_SCRIPT}"
+
+chmod 755 "${APPLY_SCRIPT}"
+echo "I: installed: ${APPLY_SCRIPT}"
+
+# =============================================================================
+# PART 2: Install the XDG autostart entry (runs the script at first login)
+# =============================================================================
+
+echo "P: 96-mse_keyboard.chroot | installing XDG autostart entry."
+
+if [ ! -d "${AUTOSTART_DIR}" ]; then
+    mkdir -p "${AUTOSTART_DIR}"
+fi
+
+# Exec uses the runtime script path (real root); .desktop Exec is not
+# shell-processed, so an absolute literal path is required.
+cat > "${AUTOSTART_ENTRY}" << EOF
+[Desktop Entry]
+Type=Application
+Name=MSE Apply Keyboard
+Comment=Derives the GNOME keyboard layout from /etc/default/keyboard at first login
+Exec=${RT_APPLY_SCRIPT}
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=2
+NoDisplay=true
+EOF
+
+echo "I: installed: ${AUTOSTART_ENTRY}"
+echo "P: 96-mse_keyboard.chroot | complete (keyboard derived from ${RT_KEYBOARD_FILE} at first login)."

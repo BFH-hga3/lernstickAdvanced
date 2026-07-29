@@ -1,21 +1,70 @@
 #!/bin/sh
-# config/hooks/normal/99-mse_disable-gnome-tour.hook.chroot
-# Disables the GNOME welcome tour / initial setup for all users
+# 99-mse_disable-gnome-tour.hook.chroot
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
+#
+# Disables the GNOME welcome tour / initial setup for all users.
+#
+# Log prefixes: E: error, W: warning, I: info, P: progress/phase.
 
 set -e
 
-# 1. Remove the tour and initial-setup packages if present
-apt-get purge --yes gnome-tour gnome-initial-setup || true
-apt-get autoremove --yes --purge || true
+# =============================================================================
+# CONFIGURATION — edit here only
+# =============================================================================
 
-# 2. Belt-and-braces: mark initial setup as done for new users via /etc/skel
-mkdir -p /etc/skel/.config
-echo yes > /etc/skel/.config/gnome-initial-setup-done
+# Filesystem root prefix. Production: "" (real root). Testing: e.g. /tmp/test.
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
 
-# 3. Mask the autostart entries in case the packages get pulled back in
-mkdir -p /etc/xdg/autostart
+# =============================================================================
+# DERIVED PATHS — do not edit
+# =============================================================================
+
+SKEL_CONFIG_DIR="${FS_ROOT_DIR}/etc/skel/.config"
+XDG_AUTOSTART_DIR="${FS_ROOT_DIR}/etc/xdg/autostart"
+DCONF_DIR="${FS_ROOT_DIR}/etc/dconf/db/local.d"
+DCONF_PROFILE_DIR="${FS_ROOT_DIR}/etc/dconf/profile"
+DCONF_PROFILE="${DCONF_PROFILE_DIR}/user"
+
+# =============================================================================
+# PART 1: Remove the tour and initial-setup packages if present
+# =============================================================================
+# Package removal only makes sense on the real root (no FS_ROOT_DIR prefix).
+# Skip it during local testing.
+
+if [ -z "${FS_ROOT_DIR}" ]; then
+    echo "P: 99-mse_disable-gnome-tour | purging gnome-tour + gnome-initial-setup."
+    apt-get purge --yes gnome-tour gnome-initial-setup || true
+    apt-get autoremove --yes --purge || true
+else
+    echo "W: FS_ROOT_DIR set (${FS_ROOT_DIR}) -- skipping package purge in test mode."
+fi
+
+# =============================================================================
+# PART 2: Mark initial setup done for new users via /etc/skel
+# =============================================================================
+
+echo "P: 99-mse_disable-gnome-tour | marking initial-setup done in skel."
+
+if [ ! -d "${SKEL_CONFIG_DIR}" ]; then
+    mkdir -p "${SKEL_CONFIG_DIR}"
+fi
+echo yes > "${SKEL_CONFIG_DIR}/gnome-initial-setup-done"
+echo "I: Wrote: ${SKEL_CONFIG_DIR}/gnome-initial-setup-done"
+
+# =============================================================================
+# PART 3: Mask autostart entries in case packages get pulled back in
+# =============================================================================
+
+echo "P: 99-mse_disable-gnome-tour | masking autostart entries."
+
+if [ ! -d "${XDG_AUTOSTART_DIR}" ]; then
+    mkdir -p "${XDG_AUTOSTART_DIR}"
+fi
+
 for f in org.gnome.Tour.desktop gnome-initial-setup-first-login.desktop; do
-    cat > "/etc/xdg/autostart/$f" <<EOF
+    cat > "${XDG_AUTOSTART_DIR}/${f}" << EOF
 [Desktop Entry]
 Type=Application
 Name=Disabled
@@ -24,19 +73,42 @@ Hidden=true
 NoDisplay=true
 X-GNOME-Autostart-enabled=false
 EOF
+    echo "I: Masked autostart: ${XDG_AUTOSTART_DIR}/${f}"
 done
 
-# 4. Set the dconf default so the shell never shows the welcome dialog
-mkdir -p /etc/dconf/db/local.d /etc/dconf/profile
+# =============================================================================
+# PART 4: Set dconf default so the shell never shows the welcome dialog
+# =============================================================================
 
-[ -f /etc/dconf/profile/user ] || cat > /etc/dconf/profile/user <<EOF
+echo "P: 99-mse_disable-gnome-tour | setting dconf welcome-dialog default."
+
+if [ ! -d "${DCONF_DIR}" ]; then
+    mkdir -p "${DCONF_DIR}"
+fi
+if [ ! -d "${DCONF_PROFILE_DIR}" ]; then
+    mkdir -p "${DCONF_PROFILE_DIR}"
+fi
+
+if [ ! -f "${DCONF_PROFILE}" ]; then
+    cat > "${DCONF_PROFILE}" << 'EOF'
 user-db:user
 system-db:local
 EOF
+    echo "I: Profile written: ${DCONF_PROFILE}"
+fi
 
-cat > /etc/dconf/db/local.d/00-no-welcome <<EOF
+cat > "${DCONF_DIR}/00-no-welcome" << 'EOF'
 [org/gnome/shell]
 welcome-dialog-last-shown-version='999'
 EOF
+echo "I: Wrote: ${DCONF_DIR}/00-no-welcome"
 
-dconf update
+# dconf update only works against the real root
+if [ -z "${FS_ROOT_DIR}" ]; then
+    dconf update
+    echo "I: dconf database updated."
+else
+    echo "W: FS_ROOT_DIR set -- skipping 'dconf update' in test mode."
+fi
+
+echo "P: 99-mse_disable-gnome-tour | complete."

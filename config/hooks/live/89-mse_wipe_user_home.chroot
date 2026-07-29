@@ -1,11 +1,14 @@
 #!/bin/sh
 # 89-mse_wipe_user_home.chroot
 #
-# Installs a PAM session hook that wipes /home/user on logout and restores
-# it from /etc/skel so the next session starts completely fresh.
-# A systemd shutdown service acts as a fallback for hard shutdowns.
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
 #
-# All configurable properties are defined at the top.
+# Installs a PAM session hook that wipes /home/user on logout and restores it
+# from /etc/skel so the next session starts fresh. A systemd shutdown service
+# is a fallback for hard shutdowns.
+#
+# Log prefixes: E: error, W: warning, I: info, P: progress/phase.
 
 set -e
 
@@ -13,54 +16,59 @@ set -e
 # CONFIGURATION — edit here only
 # =============================================================================
 
-LIVE_USER="user"
-HOME_DIR="/home/${LIVE_USER}"
-SKEL_DIR="/etc/skel"
+# Filesystem root prefix. Production: "" (real root). Testing: e.g. /tmp/test.
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
 
-WIPE_SCRIPT="/usr/local/sbin/mse-wipe-home.sh"
+LIVE_USER="user"
+
+# =============================================================================
+# DERIVED PATHS — do not edit
+# =============================================================================
+
+# Runtime paths (real root) — used INSIDE the generated scripts/units and PAM.
+RT_HOME_DIR="/home/${LIVE_USER}"
+RT_SKEL_DIR="/etc/skel"
+RT_WIPE_SCRIPT="/usr/local/sbin/mse-wipe-home.sh"
+
+# Write locations (prefixed) — where THIS hook creates files.
+WIPE_SCRIPT="${FS_ROOT_DIR}${RT_WIPE_SCRIPT}"
 SYSTEM_SERVICE_NAME="mse-wipe-home-shutdown"
-SYSTEM_SERVICE_FILE="/etc/systemd/system/${SYSTEM_SERVICE_NAME}.service"
+SYSTEM_SERVICE_FILE="${FS_ROOT_DIR}/etc/systemd/system/${SYSTEM_SERVICE_NAME}.service"
+PAM_DIR="${FS_ROOT_DIR}/etc/pam.d"
 
 # =============================================================================
 # PART 1: Install the wipe script
 # =============================================================================
 
-echo "==> [1/3] Installing wipe script..."
+echo "P: 89-mse_wipe_user_home.chroot | installing wipe script."
 
-mkdir -p "$(dirname ${WIPE_SCRIPT})"
+if [ ! -d "$(dirname ${WIPE_SCRIPT})" ]; then
+    mkdir -p "$(dirname ${WIPE_SCRIPT})"
+fi
 
 cat > "${WIPE_SCRIPT}" << EOF
 #!/bin/sh
 # mse-wipe-home.sh
-# Wipes and restores /home/${LIVE_USER} from /etc/skel.
+# Wipes and restores ${RT_HOME_DIR} from ${RT_SKEL_DIR}.
 # Called by PAM on session close (pam_exec) and by systemd on shutdown.
-#
-# IMPORTANT: When called by pam_exec on session close, PAM_TYPE=close_session.
-# When called on session open, PAM_TYPE=open_session.
-# We only wipe on close_session — never on open.
+# Only wipes on close_session (never on open).
 
 LIVE_USER="${LIVE_USER}"
-HOME_DIR="${HOME_DIR}"
-SKEL_DIR="${SKEL_DIR}"
+HOME_DIR="${RT_HOME_DIR}"
+SKEL_DIR="${RT_SKEL_DIR}"
 
-# Only wipe on session close — pam_exec calls this on both open and close.
-# PAM_TYPE is set by pam_exec: "open_session" or "close_session".
-# If called from systemd shutdown PAM_TYPE is unset — treat as close.
 if [ "\${PAM_TYPE}" = "open_session" ]; then
     exit 0
 fi
 
-echo "MSE home wipe: starting..."
+echo "MSE home wipe: starting."
 
-# Wipe entire home directory
 if [ -d "\${HOME_DIR}" ]; then
     rm -rf "\${HOME_DIR}"
     echo "    Wiped: \${HOME_DIR}"
 fi
 
-# Restore clean home from skel
 mkdir -p "\${HOME_DIR}"
-# Use find+cpio to reliably copy all skel content including hidden files
 cd "\${SKEL_DIR}" && find . | cpio -p --quiet "\${HOME_DIR}"
 chown -R "\${LIVE_USER}:\${LIVE_USER}" "\${HOME_DIR}"
 chmod 700 "\${HOME_DIR}"
@@ -69,40 +77,40 @@ echo "MSE home wipe: restored '\${HOME_DIR}' from '\${SKEL_DIR}'."
 EOF
 
 chmod 755 "${WIPE_SCRIPT}"
-echo "    Installed: ${WIPE_SCRIPT}"
+echo "I: installed: ${WIPE_SCRIPT}"
 
 # =============================================================================
 # PART 2: PAM session hook — runs at session close via pam_exec
+# The PAM line references the RUNTIME script path (real root).
 # =============================================================================
-# pam_exec fires on both open_session and close_session.
-# The wipe script checks PAM_TYPE=close_session so it only runs on logout.
-# stdout flag ensures errors appear in the journal for debugging.
-# quiet suppresses the "Calling..." pam_exec info line.
 
-echo "==> [2/3] Installing PAM logout hook..."
+echo "P: 89-mse_wipe_user_home.chroot | installing PAM logout hook."
 
-PAM_LINE="session optional pam_exec.so stdout quiet seteuid ${WIPE_SCRIPT}"
+PAM_LINE="session optional pam_exec.so stdout quiet seteuid ${RT_WIPE_SCRIPT}"
 
-for PAM_FILE in /etc/pam.d/gdm-password /etc/pam.d/gdm-autologin; do
+for PAM_NAME in gdm-password gdm-autologin; do
+    PAM_FILE="${PAM_DIR}/${PAM_NAME}"
     if [ -f "${PAM_FILE}" ]; then
         if ! grep -q "mse-wipe-home" "${PAM_FILE}"; then
             echo "${PAM_LINE}" >> "${PAM_FILE}"
-            echo "    PAM hook added to: ${PAM_FILE}"
+            echo "I: PAM hook added to: ${PAM_FILE}"
         else
-            echo "    Already present in: ${PAM_FILE}"
+            echo "I: already present in: ${PAM_FILE}"
         fi
     else
-        echo "    WARNING: ${PAM_FILE} not found — GDM may not be installed yet."
+        echo "W: ${PAM_FILE} not found -- GDM may not be installed yet."
     fi
 done
-
-echo "    PAM logout hook installed."
 
 # =============================================================================
 # PART 3: Systemd shutdown service (fallback for hard shutdown/reboot)
 # =============================================================================
 
-echo "==> [3/3] Installing system shutdown fallback service..."
+echo "P: 89-mse_wipe_user_home.chroot | installing shutdown fallback service."
+
+if [ ! -d "$(dirname ${SYSTEM_SERVICE_FILE})" ]; then
+    mkdir -p "$(dirname ${SYSTEM_SERVICE_FILE})"
+fi
 
 cat > "${SYSTEM_SERVICE_FILE}" << EOF
 [Unit]
@@ -112,7 +120,7 @@ Before=shutdown.target reboot.target halt.target
 
 [Service]
 Type=oneshot
-ExecStart=${WIPE_SCRIPT}
+ExecStart=${RT_WIPE_SCRIPT}
 RemainAfterExit=no
 StandardOutput=journal
 StandardError=journal
@@ -121,8 +129,14 @@ StandardError=journal
 WantedBy=halt.target reboot.target shutdown.target
 EOF
 
-systemctl enable "${SYSTEM_SERVICE_NAME}.service"
+echo "I: installed: ${SYSTEM_SERVICE_FILE}"
 
-echo "    Installed: ${SYSTEM_SERVICE_FILE}"
-echo "    Service enabled: ${SYSTEM_SERVICE_NAME}.service"
-echo "==> Home wipe hook complete."
+# systemctl enable only works against the real root
+if [ -z "${FS_ROOT_DIR}" ]; then
+    systemctl enable "${SYSTEM_SERVICE_NAME}.service"
+    echo "I: service enabled: ${SYSTEM_SERVICE_NAME}.service"
+else
+    echo "W: FS_ROOT_DIR set -- skipping 'systemctl enable' in test mode."
+fi
+
+echo "P: 89-mse_wipe_user_home.chroot | complete."

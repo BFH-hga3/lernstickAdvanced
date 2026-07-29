@@ -1,16 +1,14 @@
 #!/bin/sh
 # 91-mse_dock.chroot
 #
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
+#
 # Configures the GNOME dock (dash) favorites for the MSE exam environment.
 # Installs the dconf keyfile and locks file so students cannot modify the
-# dock layout.
+# dock layout. dconf is compiled at boot via 0500-mse-dconf.
 #
-# The referenced .desktop launchers are created by 92-mse_firefox_setup.chroot
-# (mse-moodle, mse-filedrop) and shipped via includes (mse-screenshot).
-# dconf references them by name — they need not exist when this hook runs.
-#
-# dconf is NOT compiled here — deferred to boot via 0500-mse-dconf
-# (installed by 98-mse_dconf_compile.chroot).
+# Log prefixes: E: error, W: warning, I: info, P: progress/phase.
 
 set -e
 
@@ -18,28 +16,28 @@ set -e
 # CONFIGURATION — edit here only
 # =============================================================================
 
-# Dock application list (order = left to right in dock).
-# .desktop filenames as known to GNOME:
-#   mse-moodle.desktop      → 92-mse_firefox_setup.chroot
-#   mse-filedrop.desktop    → 92-mse_firefox_setup.chroot
-#   mse-screenshot.desktop  → includes.chroot_after_packages
-#   org.gnome.Nautilus.desktop → GNOME Files
+# Filesystem root prefix. Production: "" (real root). Testing: e.g. /tmp/test.
+FS_ROOT_DIR="${FS_ROOT_DIR:-}"
+
+# Dock application list (order = left to right).
 DOCK_APPS="['mse-moodle.desktop', 'mse-filedrop.desktop', 'mse-screenshot.desktop', 'org.gnome.Nautilus.desktop']"
 
 # =============================================================================
 # DERIVED PATHS — do not edit
 # =============================================================================
 
-DCONF_DIR="/etc/dconf/db/local.d"
+DCONF_DIR="${FS_ROOT_DIR}/etc/dconf/db/local.d"
 DCONF_LOCKS_DIR="${DCONF_DIR}/locks"
 
 # =============================================================================
 # PART 1: Write dock dconf keyfile + locks
 # =============================================================================
 
-echo "==> [1/1] Installing GNOME dock dconf config..."
+echo "P: 91-mse_dock.chroot | installing GNOME dock dconf config."
 
-mkdir -p "${DCONF_DIR}" "${DCONF_LOCKS_DIR}"
+if [ ! -d "${DCONF_LOCKS_DIR}" ]; then
+    mkdir -p "${DCONF_LOCKS_DIR}"
+fi
 
 cat > "${DCONF_DIR}/02-mse-dock" << DCONF_EOF
 [org/gnome/shell]
@@ -50,7 +48,6 @@ cat > "${DCONF_LOCKS_DIR}/mse-dock-locks" << 'LOCKS_EOF'
 /org/gnome/shell/favorite-apps
 LOCKS_EOF
 
-echo "    Dock config: ${DCONF_DIR}/02-mse-dock"
-echo "    Dock locks:  ${DCONF_LOCKS_DIR}/mse-dock-locks"
-echo "==> MSE dock configuration complete."
-echo "    dconf compiled at boot via 0500-mse-dconf."
+echo "I: Dock config: ${DCONF_DIR}/02-mse-dock"
+echo "I: Dock locks:  ${DCONF_LOCKS_DIR}/mse-dock-locks"
+echo "P: 91-mse_dock.chroot | complete (dconf compiled at boot via 0500-mse-dconf)."
