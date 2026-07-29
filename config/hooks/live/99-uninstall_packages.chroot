@@ -1,5 +1,8 @@
 #!/bin/sh
 # 99-uninstall_packages.chroot
+#                                                                                                                             
+# SPDX-License-Identifier: GPL-3.0-or-later                                                                                   
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me> 
 #
 # MUST RUN LAST — high numeric prefix enforces this.
 #
@@ -14,15 +17,32 @@
 set -e
 
 # =============================================================================
+# Helper: purge only the packages from the argument list that are actually
+# installed. Absent packages are silently skipped, so a missing package never
+# aborts the purge of the others. Does nothing if none are installed.
+# =============================================================================
+
+purge_if_installed() {
+    to_purge=$(dpkg-query -W -f='${Package} ${db:Status-Status}\n' "$@" 2>/dev/null \
+        | awk '$2 == "installed" { print $1 }')
+    if [ -n "$to_purge" ]; then
+        # shellcheck disable=SC2086
+        apt-get purge -y $to_purge
+    fi
+}
+
+# =============================================================================
 # Packages pulled in as recommends — not wanted in exam environment
 # =============================================================================
+
+echo "P: 99-uninstall_packages.chroot -- Clean-up system and purge unwanted packages."
 
 # Note: DON'T purge xscreensaver — without it screensavers in MATE/LXDE/XFCE
 # crash (observed in Debian 9; kept as precaution).
 
-echo "==> [1/6] Purging unwanted recommends..."
+echo "I:     Purging unwanted recommends."
 
-apt-get purge -y \
+purge_if_installed \
     firmware-marvell-prestera \
     gnome-contacts \
     gnome-maps \
@@ -49,28 +69,28 @@ apt-get purge -y \
 # AppArmor — prevents evince from starting
 # =============================================================================
 
-echo "==> [2/6] Purging apparmor..."
+echo "I:     Purging apparmor."
 
-apt-get purge -y apparmor
+purge_if_installed apparmor
 
 # =============================================================================
 # DHCP client — isc-dhcp-client has a known bug (Debian 9); may not be
-# present in Trixie — use || true to avoid failure if not installed
+# present in Trixie
 # =============================================================================
 
-echo "==> [3/6] Purging isc-dhcp-client..."
+echo "I:     Purging isc-dhcp-client."
 
-apt-get purge -y \
+purge_if_installed \
     isc-dhcp-client \
-    isc-dhcp-common || true
+    isc-dhcp-common
 
 # =============================================================================
 # Bluetooth — disabled in exam environment to prevent data exchange
 # =============================================================================
 
-echo "==> [4/6] Purging bluetooth packages..."
+echo "I:     Purging bluetooth packages."
 
-apt-get purge -y \
+purge_if_installed \
     bluez \
     bluez-obexd \
     gnome-bluetooth \
@@ -80,9 +100,9 @@ apt-get purge -y \
 # GNOME Software — triggers password prompt at startup in exam environment
 # =============================================================================
 
-echo "==> [5/6] Purging gnome-software..."
+echo "I:     Purging gnome-software."
 
-apt-get purge -y gnome-software
+purge_if_installed gnome-software
 
 # =============================================================================
 # Build-time tools — used by hooks, not needed in the live image
@@ -91,7 +111,7 @@ apt-get purge -y gnome-software
 #   librsvg2-bin  → 93-mse_wallpaper, 94-mse_bootlogo (SVG to PNG conversion)
 # =============================================================================
 
-echo "==> [6/6] Purging build-time tools..."
+echo "I:     Purging build-time tools."
 
 # NOTE: curl is intentionally NOT purged here.
 # It is needed at runtime by /usr/local/bin/fetch-template.sh
@@ -100,32 +120,40 @@ echo "==> [6/6] Purging build-time tools..."
 # NOTE: whois is no longer installed in the chroot — mkpasswd now
 # runs on the build host in functions.sh. Nothing to purge here.
 
-apt-get purge -y \
-	imagemagick \
-	librsvg2-bin
+purge_if_installed \
+    imagemagick \
+    librsvg2-bin
 
+# =============================================================================
+# Optional utilities — present only with certain build settings
+# =============================================================================
 
-echo "==> [7/6] Purging not needed utils..."
+echo "I:     Purging not needed utils."
 
-apt-get purge -y \
-	jbackpack \
-	jbackpack-restore \
-	jbackpack-restore-admin \
-	wxmaxima \
-	gnome-calendar \
-	projecteur \
-	gnome-connections \
-	lernstick-flatpak-musescore \
-	timidity \
-	pspp \
-	lernstick-onboard \
-	onboard \
-	rsync \
-	sshfs \
-	openssh-client \
-	openssh-server \
-	openssh-sftp-server
-
+purge_if_installed \
+    jbackpack \
+    jbackpack-restore \
+    jbackpack-restore-admin \
+    wxmaxima \
+    gnome-calendar \
+    projecteur \
+    gnome-connections \
+    lernstick-flatpak-musescore \
+    timidity \
+    pspp \
+    lernstick-onboard \
+    onboard \
+    gnome-snapshot \
+    lernstick-libreoffice-impress \
+    libreoffice-impress \
+    lernstick-libreoffice-draw \
+    libreoffice-draw \
+    virtualbox \
+    rsync \
+    sshfs \
+    openssh-client \
+    openssh-server \
+    openssh-sftp-server
 
 # =============================================================================
 # Final cleanup
@@ -135,4 +163,4 @@ apt-get autoremove -y --purge
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 
-echo "==> Uninstall complete."
+echo "P: 99-uninstall_packages.chroot -- Uninstall complete."
