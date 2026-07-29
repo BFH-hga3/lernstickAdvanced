@@ -41,6 +41,9 @@ exfatprogs
 fbset
 firmware-ath9k-htc
 firmware-linux-free
+xfonts-100dpi
+xfonts-75dpi
+xfonts-cyrillic
 fonts-comic-neue
 fonts-courier-prime
 fonts-crosextra-carlito
