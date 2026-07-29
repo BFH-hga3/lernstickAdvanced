@@ -21,8 +21,8 @@ set -e
 # =============================================================================
 
 # GNOME input sources, in order. First = default.
-# xkb variant 'ch+de' = Swiss German, 'ch+fr' = Swiss French.
-INPUT_SOURCES="[('xkb', 'ch+de'), ('xkb', 'ch+fr'), ('xkb', 'it'), ('xkb', 'us')]"
+# xkb variant 'ch' = Swiss German, 'ch+fr' = Swiss French.
+INPUT_SOURCES="[('xkb', 'ch'), ('xkb', 'ch+fr'), ('xkb', 'it'), ('xkb', 'us')]"
 
 # =============================================================================
 # DERIVED PATHS — do not edit
@@ -35,13 +35,13 @@ DCONF_LOCKS_DIR="${DCONF_DIR}/locks"
 # PART 1: Install keyboard input-sources dconf keyfile + locks
 # =============================================================================
 
-echo "==> [1/1] Installing keyboard input-sources dconf config..."
+echo "P:  96-mse_keyboard.chroot -- Installing keyboard input-sources dconf config."
 
 mkdir -p "${DCONF_DIR}" "${DCONF_LOCKS_DIR}"
 
 cat > "${DCONF_DIR}/03-mse-keyboard" << DCONF_EOF
 [org/gnome/desktop/input-sources]
-# Swiss German (ch+de) is first = default keyboard layout.
+# Swiss German (ch) is first = default keyboard layout.
 sources=${INPUT_SOURCES}
 current=uint32 0
 per-window=false
@@ -55,4 +55,4 @@ LOCKS_EOF
 
 echo "    dconf keyfile: ${DCONF_DIR}/03-mse-keyboard"
 echo "    dconf locks:   ${DCONF_LOCKS_DIR}/mse-keyboard-locks"
-echo "==> MSE keyboard configuration complete."
+echo "P:  96-mse_keyboard.chroot -- MSE keyboard configuration complete."
