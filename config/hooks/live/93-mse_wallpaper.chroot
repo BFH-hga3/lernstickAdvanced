@@ -115,8 +115,8 @@ convert \
     -fill "${MSE_ACCENT_COLOUR}" \
     -font DejaVu-Sans \
     -pointsize 24 \
-    -gravity South \
-    -annotate +${WALLPAPER_HEIGHT}-60 "${WALLPAPER_TEXT}" \
+    -gravity North \
+    -annotate +0+60 "${WALLPAPER_TEXT}" \
     "${WALLPAPER_FILE}"
 
 echo "I: wallpaper written: ${WALLPAPER_FILE}"
