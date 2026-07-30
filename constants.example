@@ -42,3 +42,8 @@ THEME_TITLE="Lernstick: Exam Version -- Debian 13"
 # must stay constant across themes.
 #GRUB_THEME_NAME="lernstick"
 
+# The theme ships an .ico at the top of themes/<THEME>/ (alongside the
+# gfxboot/ and grub/ folders). Copy it into the ISO binary tree so it is
+# present on the built image. Icon filename defaults to <THEME>.ico but
+# can be overridden in constants via THEME_ICON_NAME.
+#THEME_ICON_NAME="lernstick.ico"

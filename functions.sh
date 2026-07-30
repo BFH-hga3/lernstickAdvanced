@@ -137,7 +137,6 @@ stage_theme()
 	sed -i "s|<version its:translate=\"no\">.*</version>|<version its:translate=\"no\">(Version ${TODAY})</version>|1" \
 		"${BOOTLOGO_DIR}/xmlboot.config"
 	gfxboot --archive "${BOOTLOGO_DIR}" --pack-archive "${BOOTLOGO}"
-	cp "${BOOTLOGO}" "${BOOTLOGO}.orig" ## TODO: remove in order to clean up and shrink image
 	echo "[INFO] Packed gfxboot bootlogo for theme '${THEME}'"
 
 	# --- GRUB2 (UEFI) -------------------------------------------------------
@@ -175,6 +174,89 @@ stage_theme()
 	else
 		echo "[ERROR] GRUB config not found: ${GRUB_CFG}"
 		exit 1
+	fi
+
+	# --- Theme icon (.ico) --------------------------------------------------
+	# The theme ships an .ico at the top of themes/<THEME>/ (alongside the
+	# gfxboot/ and grub/ folders). Copy it into the ISO binary tree so it is
+	# present on the built image. Icon filename defaults to <THEME>.ico but
+	# can be overridden in constants via THEME_ICON_NAME.
+	THEME_ICON_NAME="${THEME_ICON_NAME:-${THEME}.ico}"
+	THEME_ICON="${THEME_DIR}/${THEME_ICON_NAME}"
+	BINARY_DIR="config/includes.binary"
+
+	if [ -e "${THEME_ICON}" ]; then
+		mkdir -p "${BINARY_DIR}"
+		cp "${THEME_ICON}" "${BINARY_DIR}/"
+		echo "[INFO] Staged theme icon '${THEME_ICON_NAME}' to ${BINARY_DIR}/"
+
+		# --- Freedesktop volume icon & name ------------------------------
+		# Give the mounted ISO a branded icon and display name in file
+		# managers, using an image bundled on the medium itself (no host-side
+		# install required). live-build masters the ISO with Rock Ridge
+		# enabled by default, so the leading-dot filenames and the PNG all
+		# survive on the medium.
+		#
+		# Primary mechanism: .xdg-volume-info at the volume root. This is a
+		# first-class GVfs feature (g_vfs_mount_info_query_xdg_volume_info),
+		# so it IS honored on GNOME/Nautilus and other GVfs-based managers.
+		# It is an XDG key file with a [Volume Info] group:
+		#     Name     - display name (locale-aware; Name[de]=... works too)
+		#     IconFile - path to an image on the medium, resolved relative
+		#                to the volume root (this is what carries our logo)
+		#     Icon     - fallback themed-icon NAME (used only if IconFile is
+		#                absent/unresolvable)
+		# When IconFile is set, GVfs builds the icon straight from that file
+		# on the disc, so the logo displays on a stock GNOME system.
+		#
+		# Secondary: a .directory desktop entry is also written for KDE /
+		# Dolphin, which reads that instead. The two do not conflict.
+		#
+		# The PNG is derived from the theme .ico. Its name defaults to
+		# .VolumeIcon.png but can be overridden via THEME_VOLICON_NAME.
+		# The visible name defaults to THEME_TITLE.
+		THEME_VOLICON_NAME="${THEME_VOLICON_NAME:-.VolumeIcon.png}"
+		_volicon_src="${THEME_ICON}"
+		_volicon_dst="${BINARY_DIR}/${THEME_VOLICON_NAME}"
+		_volname="${THEME_TITLE:-${THEME}}"
+
+		if command -v convert >/dev/null 2>&1; then
+			# An .ico may contain several sizes; take the largest frame so
+			# the volume icon is as crisp as possible, force sRGB, strip
+			# any profile, and emit a clean truecolor+alpha PNG.
+			_largest=$(identify -format '%p %w\n' "${_volicon_src}" 2>/dev/null \
+				| sort -k2 -n | tail -1 | cut -d' ' -f1)
+			_largest="${_largest:-0}"
+			if convert "${_volicon_src}[${_largest}]" \
+				-colorspace sRGB -strip -type TrueColorAlpha \
+				PNG32:"${_volicon_dst}" 2>/dev/null; then
+				echo "[INFO] Converted theme icon to volume PNG '${THEME_VOLICON_NAME}'"
+
+				# Primary: .xdg-volume-info (GNOME/GVfs). IconFile is
+				# resolved relative to the volume root.
+				cat > "${BINARY_DIR}/.xdg-volume-info" <<-EOF
+					[Volume Info]
+					Name=${_volname}
+					IconFile=${THEME_VOLICON_NAME}
+				EOF
+				echo "[INFO] Wrote '.xdg-volume-info' (IconFile=${THEME_VOLICON_NAME})"
+
+				# Secondary: .directory for KDE/Dolphin. Icon path is
+				# relative to the volume root so it resolves off the medium.
+				cat > "${BINARY_DIR}/.directory" <<-EOF
+					[Desktop Entry]
+					Icon=./${THEME_VOLICON_NAME}
+					Name=${_volname}
+				EOF
+				echo "[INFO] Wrote KDE volume '.directory' (Icon=./${THEME_VOLICON_NAME})"
+			else
+				echo "[WARN] Failed to convert '${THEME_ICON_NAME}' to PNG; skipping volume-info files"
+			fi
+		else
+			echo "[WARN] 'convert' (ImageMagick) not on build host; skipping volume PNG and volume-info files"
+		fi
+	else
+		echo "[WARN] Theme icon not found: '${THEME_ICON}' (skipping icon staging)"
 	fi
 
 }
