@@ -1,71 +1,78 @@
 #!/bin/sh
+# ===========================================================================
+# build_cleanup
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Andreas HABEGGER <andreas.habegger@proton.me>
+# SPDX-FileCopyrightText: 2025 Rony STANDTKE <ronny.standtke@bfh.ch>
+#
+# PURPOSE
+#   Reset an existing tmpfs build area between builds WITHOUT recreating the
+#   image: runs 'lb clean --all', refreshes the config copy, and ensures the
+#   cache/themes symlinks into the tmpfs image mount are present and correct.
+#   Use this for a quick clean rebuild; use build_tmpfs.sh when you need a
+#   fresh image (e.g. after changing TMPFS_IMAGE_SIZE).
+# ===========================================================================
+
+set -e
 
 . ./functions.sh
 check_and_source_constants
 
-# Experience has shown that using a file system in RAM speeds up the build
-# process between 5 to 10 times in comparison to using a file system on SSDs or
-# classical hard drives with spinning rust.
-# Unfortunately, tmpfs doesn't support extended attributes but they are needed
-# by some tools during installation, e.g. flatpak. Therefore we can't use
-# tmpfs mounts directly but must create an additional image inside the tmpfs
-# that must be formatted with another file system that supports extended
-# attributes (e.g. ext4).
+# See tmpfs_rationale in functions.sh for why the build runs in an ext4 image
+# inside the tmpfs rather than in the tmpfs directly.
 
 if findmnt "${TMPFS}" > /dev/null
 then
-	echo "[INFO] : found tmpfs mounted on \"${TMPFS}\""
+	log_info "found tmpfs mounted on \"${TMPFS}\""
 	if findmnt "${TMPFS_IMAGE_MOUNT}" > /dev/null
 	then
-		echo "[INFO] : found tmpfs image mounted on \"${TMPFS_IMAGE_MOUNT}\""
+		log_info "found tmpfs image mounted on \"${TMPFS_IMAGE_MOUNT}\""
 	else
-		echo "[WARNING] : no tmpfs image mounted on \"${TMPFS_IMAGE_MOUNT}\" found"
-		echo "[INFO] : execute 'build_tmpfs.sh'"
+		log_warn "no tmpfs image mounted on \"${TMPFS_IMAGE_MOUNT}\" found"
+		log_info "execute 'build_tmpfs.sh'"
 		exit 1
 	fi
 else
-	echo "[WARNING] : There is no mounted filesystem in \"${TMPFS}\"."
-	echo "[INFO] : execute 'build_tmpfs.sh'"
+	log_warn "There is no mounted filesystem in \"${TMPFS}\"."
+	log_info "execute 'build_tmpfs.sh'"
 	exit 1
 fi
 
-PWD="$(pwd)"
+repo_root="$(pwd)"
 
 lb clean --all
 
-## Copy configurations from template to chroot env.
+## Copy configuration from template into the build root.
 if [ -d "${TMPFS_IMAGE_MOUNT}/config" ]; then rm -rf "${TMPFS_IMAGE_MOUNT}/config"; fi
+cp -a "${repo_root}/config" "${TMPFS_IMAGE_MOUNT}"
 
-cp -a "${PWD}/config" "${TMPFS_IMAGE_MOUNT}"
+## ensure_symlink SRC DST_DIR NAME
+## Ensures DST_DIR/NAME is a symlink to SRC, repairing/reporting as needed.
+ensure_symlink()
+{
+	_src="$1"
+	_link="$2"
+	if [ -L "${_link}" ]
+	then
+		if [ -e "${_link}" ]
+		then
+			log_info "The link '${_link}' -> '${_src}' already exists."
+			rm ${_link}
+			ensure_symlink ${_src} ${_link}
+		else
+			log_error "The link '${_link}' is a broken link."
+			exit 1
+		fi
+	elif [ -e "${_link}" ]
+	then
+		log_warn "'${_link}' exists but is not a link."
+	else
+		log_info "Creating proper '${_link}' -> '${_src}' link."
+		ln -s "${_src}" "${_link}"
+	fi
+}
 
-## Check link to cache directory.
-if [ -L "${TMPFS_IMAGE_MOUNT}/cache" ] ; then
-   if [ -e "${TMPFS_IMAGE_MOUNT}/cache" ] ; then
-      echo "[INFO] : The link to '${TMPFS_IMAGE_MOUNT}/cache' -> '${PWD}/cache' already exists."
-   else
-      echo "[ERROR] : The link to '${TMPFS_IMAGE_MOUNT}/cache' is a broken link."
-      exit 1
-   fi
-elif [ -e "${TMPFS_IMAGE_MOUNT}/cache" ] ; then
-   echo "[WARNING] : The link to '${TMPFS_IMAGE_MOUNT}/cache' is not a link."
-else
-   echo "[INFO] : Creating proper '${TMPFS_IMAGE_MOUNT}/cache' -> '${PWD}/cache' link."
-   ln -s "${PWD}/cache" "${TMPFS_IMAGE_MOUNT}"
-fi
-
-## Check link to templates directory.
-if [ -L "${TMPFS_IMAGE_MOUNT}/themes" ] ; then
-   if [ -e "${TMPFS_IMAGE_MOUNT}/themes" ] ; then
-      echo "[INFO] : The link to '${TMPFS_IMAGE_MOUNT}/themes' -> '${PWD}/themes' already exists."
-   else
-      echo "[ERROR] : The link to '${TMPFS_IMAGE_MOUNT}/themes' is a broken link."
-      exit 1
-   fi
-elif [ -e "${TMPFS_IMAGE_MOUNT}/themes" ] ; then
-   echo "[WARNING] : The link to '${TMPFS_IMAGE_MOUNT}/themes' is not a link."
-else
-   echo "[INFO] : Creating proper '${TMPFS_IMAGE_MOUNT}/themes' -> '${PWD}/themes' link."
-   ln -s "${PWD}/themes" "${TMPFS_IMAGE_MOUNT}"
-fi
-
-
+## Check links to cache and themes directories.
+ensure_symlink "${repo_root}/cache"  "${TMPFS_IMAGE_MOUNT}/cache"
+ensure_symlink "${repo_root}/themes" "${TMPFS_IMAGE_MOUNT}/themes"

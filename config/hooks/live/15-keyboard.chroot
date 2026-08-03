@@ -38,7 +38,7 @@ BACKSPACE="guess"
 # PART 1: Write /etc/default/keyboard
 # =============================================================================
 
-echo "==> [1/2] Writing /etc/default/keyboard..."
+echo "P: 15-keyboard.chroot | Writing /etc/default/keyboard."
 
 cat > /etc/default/keyboard << KEYBOARD_EOF
 XKBMODEL="${XKBMODEL}"
@@ -56,7 +56,7 @@ echo "    Written: /etc/default/keyboard"
 # Debian 13's libx11 for the ch/it layout definition. All keys work correctly.
 # =============================================================================
 
-echo "==> [2/2] Applying keyboard configuration..."
+echo "P: 15-keyboard.chroot | Applying keyboard configuration..."
 
 if command -v setupcon >/dev/null 2>&1; then
     setupcon --save --force 2>&1 | grep -v "dead_belowmacron" || true
@@ -65,5 +65,5 @@ else
     echo "    INFO: setupcon not found — keyboard will be configured at first boot."
 fi
 
-echo "==> Keyboard configuration complete."
+echo "P: 15-keyboard.chroot | Keyboard configuration complete."
 echo "    Layouts: ch-de, ch-fr, it, us (Alt+Shift to cycle)"

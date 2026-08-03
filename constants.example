@@ -1,4 +1,56 @@
-BUILD_DIR="/home/ronny/lernstick/build/"
+# ---------------------------------------------------------------------------
+# ISO identity & build type — DEFAULTS
+# ---------------------------------------------------------------------------
+# These provide the defaults used by the build_*.sh entry scripts. Each entry
+# script may override any of them for its specific target (e.g. the source
+# build sets SOURCE=true); anything it does not override falls back to the
+# value here, and if unset here, to a safe built-in default.
+#
+#   ISO_PREFIX  leading token of the image name and volume id (default "MSE")
+#   ISO_SUFFIX  trailing token of the image name and volume id (default "vs")
+#   SOURCE      "true" also builds the matching Debian source tarballs
+#               (default "false")
+ISO_PREFIX="MSE"
+ISO_SUFFIX="vs"
+SOURCE="false"
+
+# ---------------------------------------------------------------------------
+# Directories
+# ---------------------------------------------------------------------------
+# Build artifacts live under a single git-ignorable root. The leading
+# underscore marks the tree for exclusion from version control — add a line
+# like "/_build/" (or the pattern "_*") to .gitignore.
+#
+# Two directories, both defaulting under "<repo>/_build":
+#   OUTPUT_DIR           final deliverables: ISO, OVA, checksums, logs.
+#   BUILD_ARTEFACTS_DIR  intermediate scratch: VirtualBox base/overlay disks
+#                        and the working VM registration.
+#
+# Leave all three UNSET to use the safe defaults:
+#   ARTEFACT_ROOT        = <repo>/_build
+#   OUTPUT_DIR           = <repo>/_build/output
+#   BUILD_ARTEFACTS_DIR  = <repo>/_build/artefacts
+#
+# Override individually only to relocate (e.g. onto a disk with more space).
+#ARTEFACT_ROOT="/home/user/lernstick/_build"
+#OUTPUT_DIR="/home/user/lernstick/_build/output"
+#BUILD_ARTEFACTS_DIR="/home/user/lernstick/_build/artefacts"
+
+# BUILD_ROOT: where the build actually runs. Leave it UNSET to auto-select:
+#   - if a tmpfs image is mounted at TMPFS_IMAGE_MOUNT, that is used;
+#   - otherwise the build falls back to an on-disk directory (see below).
+# Set it explicitly only to force a specific location regardless of tmpfs.
+#BUILD_ROOT=""
+
+# BUILD_ROOT_FALLBACK: on-disk directory used when no tmpfs is mounted and
+# BUILD_ROOT is unset. Defaults to "<repo>/_build/work" (under the same
+# git-ignorable root). The no-tmpfs path is fully supported — just slower.
+#BUILD_ROOT_FALLBACK="/home/user/lernstick/_build/work/"
+
+# ---------------------------------------------------------------------------
+# tmpfs (optional, RAM-backed build — 5-10x faster; see tmpfs_rationale in
+# functions.sh). All four are only used when building with a tmpfs.
+# ---------------------------------------------------------------------------
 TMPFS="/mytmpfs/"
 TMPFS_IMAGE="/mytmpfs/lernstick.img"
 ## given in GB
@@ -16,7 +68,7 @@ export MIRROR_SECURITY_SYSTEM="http://security.debian.org/"
 
 ## MSE exam passwords — MUST be set before building
 ## These are NOT tracked by git (constants is in .gitignore)
-## Minimum 8 characters required — build will fail loudly if unset
+## Minimum 8 characters required (enforced in generate_password_hashes)
 #export MSE_USER_PASSWORD="change-me-before-building"
 #export MSE_ADMIN_PASSWORD="change-me-before-building"
 #
@@ -47,3 +99,64 @@ THEME_TITLE="Lernstick: Exam Version -- Debian 13"
 # present on the built image. Icon filename defaults to <THEME>.ico but
 # can be overridden in constants via THEME_ICON_NAME.
 #THEME_ICON_NAME="lernstick.ico"
+
+# ---------------------------------------------------------------------------
+# VirtualBox appliance (.ova) — optional
+# ---------------------------------------------------------------------------
+# Used only by build_*_vbox.sh (build_virtualbox_ova). The live ISO is wrapped
+# into a portable .ova: a read-only disk holding the live system plus a
+# separate, adaptively-growing (thin-provisioned) persistence overlay disk.
+
+# Overlay capacity in GB. The .vdi only consumes real host space as the guest
+# writes into it, up to this size. Default 8.
+#VBOX_OVERLAY_SIZE_GB=8
+
+# Body of persistence.conf written to the overlay root. "/ union" makes the
+# whole system persistent (full overlay). For selective persistence use e.g.
+# a multi-line value like "/home\n/etc union". Default "/ union".
+#VBOX_OVERLAY_CONF="/ union"
+
+# Appliance / VM name. Defaults to "${ISO_PREFIX}-vs".
+#VBOX_VM_NAME="MSE-vs"
+
+# Guest resources.
+#VBOX_VM_RAM_MB=2048
+#VBOX_VM_VRAM_MB=32
+
+# ---------------------------------------------------------------------------
+# Release builds — branch walk
+# ---------------------------------------------------------------------------
+# The release scripts (build_binary_release.sh / build_source_release.sh)
+# build several images in sequence, each from its own git branch. This is
+# expressed as a list of "branch:build-script" steps that the release runner
+# walks in order. For each step it checks out <branch>, refreshes the tmpfs,
+# and runs <build-script>.
+#
+# POSIX sh has no arrays, so the list is a whitespace-separated string (space
+# or newline separated). Each item is  BRANCH:SCRIPT .
+#
+#   RELEASE_STEPS_BINARY   steps for the binary (.iso) release
+#   RELEASE_STEPS_SOURCE   steps for the source (tarball) release
+#   RELEASE_FINAL_BRANCH   branch to check out again when done (default: the
+#                          branch that was current when the script started, so
+#                          the working copy is left as it was found)
+#
+# SAFE DEFAULT: if a RELEASE_STEPS_* list is left unset, the release runner
+# does a single step on the CURRENT branch (whatever is checked out now) using
+# that release's default build script. This makes a release a no-surprise
+# "build what I have checked out" operation until you deliberately configure
+# the multi-branch walk.
+#
+# Example (uncomment and adapt to your branch layout):
+#RELEASE_STEPS_BINARY="
+#    debian13:build_edu-mini_iso.sh
+#    debian13:build_edu_iso.sh
+#    exam-debian13:build_exam_iso.sh
+#"
+#RELEASE_STEPS_SOURCE="
+#    debian13:build_edu-mini_iso.sh
+#    debian13:build_source.sh
+#    exam-debian13:build_source.sh
+#"
+# Leave unset to return to the pre-build branch afterwards.
+#RELEASE_FINAL_BRANCH="debian13"

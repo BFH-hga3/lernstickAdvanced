@@ -4,8 +4,14 @@
 # prevent accidental upgrades that could break module compatibility.
 # Must run after packages are installed, before cleanup.
 
-PIN_FILE="/etc/apt/preferences.d/kernel_pin"
+set -e
 
+PIN_DIR="/etc/apt/preferences.d"
+PIN_FILE="${PIN_DIR}/kernel_pin"
+
+if [ ! -d "${PIN_DIR}" ]; then
+  mkdir -p "${PIN_DIR}"
+fi
 # Ensure the pin file exists before any grep/sed operations
 touch "$PIN_FILE"
 

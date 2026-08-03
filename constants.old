@@ -1,0 +1,29 @@
+BUILD_DIR="/mnt/data/lernstick/build"
+TMPFS="/mytmpfs"
+TMPFS_IMAGE="/mytmpfs/lernstick.img"
+## given in GB
+TMPFS_IMAGE_SIZE=50
+TMPFS_IMAGE_MOUNT="/mytmpfs/lernstick"
+
+## these variables must be exported to make them available to
+## subcommands
+## Mirror used to build the image (preferably a local mirror)
+export MIRROR_BUILD="http://localhost:9999/debian"
+#export MIRROR_BUILD="http://deb.debian.org/debian"
+
+## Mirror used on the built system (preferably a mirror with good connectivity for most users)
+export MIRROR_SYSTEM="http://deb.debian.org/debian"
+export MIRROR_SECURITY_SYSTEM="http://security.debian.org/"
+
+## MSE exam passwords — MUST be set before building
+## These are NOT tracked by git (constants is in .gitignore)
+## Minimum 8 characters required — build will fail loudly if unset
+export MSE_USER_PASSWORD="live"
+export MSE_ADMIN_PASSWORD="admin4mseSys!"
+
+# Boot theme selection
+THEME="mse"
+# Title text stamped into the GRUB theme.txt (build date is appended
+# automatically). Optional; a sensible MSE default is used if unset.
+THEME_TITLE="MSE Lernstick: Exam Viewing Session -- Debian 13"
+

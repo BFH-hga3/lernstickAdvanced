@@ -1,13 +1,242 @@
+# ---------------------------------------------------------------------------
+# Logging helpers
+#
+# A single consistent log format across every script. Everything goes to
+# stderr so it never contaminates stdout (e.g. command substitution).
+# ---------------------------------------------------------------------------
+log_info()  { echo "[INFO] : $*" >&2; }
+log_warn()  { echo "[WARNING] : $*" >&2; }
+log_error() { echo "[ERROR] : $*" >&2; }
+
 check_and_source_constants()
 {
 	if [ -e constants ]
 	then
 		. ./constants
 	else
-		echo "Please copy the file \"constants.example\" to \"constants\" and adopt the settings to your build environment."
+		log_error "Please copy the file \"constants.example\" to \"constants\" and adopt the settings to your build environment."
 		exit 1
 	fi
 }
+
+# ---------------------------------------------------------------------------
+# resolve_build_root()
+#
+# Decides WHERE the build runs and cd's into it. Two orthogonal concepts:
+#
+#   BUILD_ROOT  - the directory the build actually runs in. It may be a tmpfs
+#                 image mount (fast, RAM-backed) or a plain directory on disk.
+#                 The name deliberately does NOT encode which.
+#   OUTPUT_DIR  - where finished images and logs are collected afterwards.
+#
+# Resolution order for BUILD_ROOT:
+#   1. If BUILD_ROOT is set in constants, use it verbatim (explicit wins).
+#   2. Else, if a tmpfs image is mounted at TMPFS_IMAGE_MOUNT, use that.
+#   3. Else, fall back to an on-disk directory and warn.
+#
+# This makes the no-tmpfs path a first-class, working mode rather than the
+# previous half-broken prompt that fell through without cd-ing anywhere.
+# ---------------------------------------------------------------------------
+resolve_build_root()
+{
+	# Explicit override always wins.
+	if [ -n "${BUILD_ROOT}" ]
+	then
+		log_info "Using configured BUILD_ROOT: ${BUILD_ROOT}"
+	elif [ -n "${TMPFS_IMAGE_MOUNT}" ] && findmnt "${TMPFS_IMAGE_MOUNT}" >/dev/null 2>&1
+	then
+		BUILD_ROOT="${TMPFS_IMAGE_MOUNT}"
+		log_info "tmpfs image mounted; building in ${BUILD_ROOT}"
+	else
+		# No tmpfs and no explicit BUILD_ROOT. Fall back to an on-disk
+		# working directory under the git-ignorable _build root (resolved
+		# earlier by resolve_artefact_dirs) so the build still has a defined,
+		# version-control-excluded home.
+		BUILD_ROOT="${BUILD_ROOT_FALLBACK:-${_artefact_root:-${REPO_ROOT:-$(pwd)}/_build}/work}"
+		log_warn "No tmpfs image mounted at '${TMPFS_IMAGE_MOUNT:-<unset>}'."
+		log_warn "Building on disk in '${BUILD_ROOT}' (slower). Run build_tmpfs.sh for a RAM-backed build."
+	fi
+
+	mkdir -p "${BUILD_ROOT}" || {
+		log_error "Could not create build root '${BUILD_ROOT}'."
+		exit 1
+	}
+	cd "${BUILD_ROOT}" || {
+		log_error "Could not enter build root '${BUILD_ROOT}'."
+		exit 1
+	}
+	log_info "Build root: $(pwd)"
+}
+
+# ---------------------------------------------------------------------------
+# resolve_artefact_dirs()
+#
+# Unifies where build artifacts are stored. Two directories, both defaulting
+# under a single git-ignorable root in the repository:
+#
+#   OUTPUT_DIR           final deliverables: ISO, OVA, checksums, logs.
+#   BUILD_ARTEFACTS_DIR  intermediate scratch: VirtualBox base/overlay disks,
+#                        the working VM registration, loop mountpoints.
+#
+# Both default under "<repo>/_build". The leading underscore marks the tree
+# for exclusion from version control (add "_*" or "/_build/" to .gitignore).
+# Either may be overridden in constants to point elsewhere (e.g. a fast disk
+# or a location with more space).
+#
+# Idempotent and safe to call from any entry point; creates the directories.
+# ---------------------------------------------------------------------------
+resolve_artefact_dirs()
+{
+	# Single git-ignorable root under the repo, unless the caller pointed the
+	# individual directories elsewhere.
+	_artefact_root="${ARTEFACT_ROOT:-${REPO_ROOT:-$(pwd)}/_build}"
+
+	OUTPUT_DIR="${OUTPUT_DIR:-${_artefact_root}/output}"
+	BUILD_ARTEFACTS_DIR="${BUILD_ARTEFACTS_DIR:-${_artefact_root}/artefacts}"
+
+	for _d in "${OUTPUT_DIR}" "${BUILD_ARTEFACTS_DIR}"; do
+		mkdir -p "${_d}" || {
+			log_error "Could not create artifact directory '${_d}'."
+			exit 1
+		}
+	done
+	log_info "Output dir     : ${OUTPUT_DIR}"
+	log_info "Artefacts dir  : ${BUILD_ARTEFACTS_DIR}"
+}
+
+# ---------------------------------------------------------------------------
+# run_build()
+#
+# Shared entry point for every build_*.sh script. Entry scripts may override
+# ISO_PREFIX / ISO_SUFFIX / SOURCE (typically after sourcing constants); any
+# left unset fall back to the values in constants, and failing that to safe
+# built-in defaults applied here. All the previously-duplicated boilerplate
+# (build-root resolution, output-dir check, init/configure/build) lives here.
+# ---------------------------------------------------------------------------
+run_build()
+{
+	# Safe built-in defaults. These apply only if neither the entry script
+	# nor constants set the variable, so a minimal constants file still
+	# produces a sensible binary MSE build.
+	ISO_PREFIX="${ISO_PREFIX:-MSE}"
+	ISO_SUFFIX="${ISO_SUFFIX:-vs}"
+	SOURCE="${SOURCE:-false}"
+	log_info "Build target: ISO_PREFIX='${ISO_PREFIX}' ISO_SUFFIX='${ISO_SUFFIX}' SOURCE='${SOURCE}'"
+
+	# Resolve where final deliverables and scratch artifacts go (safe
+	# defaults under <repo>/_build), creating the directories.
+	resolve_artefact_dirs
+
+	# Decide where the build runs (tmpfs or on-disk) and cd there.
+	resolve_build_root
+
+	init_build
+	configure
+	build_image
+}
+
+# ---------------------------------------------------------------------------
+# run_release()
+#
+# Shared runner for the release scripts. Walks a list of "branch:build-script"
+# steps: for each, checks out the branch, refreshes the tmpfs image, and runs
+# the build script. Restores a final branch when done and optionally shuts the
+# machine down.
+#
+# Usage (from a release entry script):
+#   run_release "${RELEASE_STEPS_BINARY}" "build_exam_iso.sh"
+# where arg 1 is the whitespace-separated step list (may be empty) and arg 2
+# is the fallback build script used when the list is empty.
+#
+# SAFE DEFAULT: an empty step list becomes a single step on the CURRENT branch
+# using the fallback build script — i.e. "build what is checked out now".
+#
+# SHUTDOWN_AFTER_BUILDING (set by the caller) triggers a delayed shutdown at
+# the end, preserving the original behaviour.
+# ---------------------------------------------------------------------------
+run_release()
+{
+	_steps="$1"
+	_fallback_build="$2"
+
+	# Remember the branch we started on so we can return to it unless the
+	# caller pinned RELEASE_FINAL_BRANCH explicitly.
+	_start_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+	_final_branch="${RELEASE_FINAL_BRANCH:-${_start_branch}}"
+
+	# Safe default: no configured steps -> one step on the current branch
+	# with the fallback build script.
+	if [ -z "$(printf '%s' "${_steps}" | tr -d ' \t\n')" ]; then
+		if [ -z "${_start_branch}" ] || [ "${_start_branch}" = "HEAD" ]; then
+			log_warn "No RELEASE_STEPS configured and current branch is unknown/detached."
+			log_warn "Running a single build on the current checkout with '${_fallback_build}'."
+			_steps="HEAD:${_fallback_build}"
+		else
+			log_info "No RELEASE_STEPS configured; building current branch '${_start_branch}' with '${_fallback_build}'."
+			_steps="${_start_branch}:${_fallback_build}"
+		fi
+	fi
+
+	# Walk the steps. IFS split on whitespace handles both space- and
+	# newline-separated lists.
+	_step_no=0
+	for _step in ${_steps}; do
+		_step_no=$((_step_no + 1))
+		_branch="${_step%%:*}"
+		_build="${_step#*:}"
+
+		if [ -z "${_branch}" ] || [ -z "${_build}" ] || [ "${_branch}" = "${_step}" ]; then
+			log_error "Malformed release step '${_step}' (expected BRANCH:SCRIPT). Skipping."
+			continue
+		fi
+
+		log_info "=== Release step ${_step_no}: branch '${_branch}' -> ${_build} ==="
+
+		# Only check out if we are not already on the target branch (avoids
+		# needless checkouts and a failure on 'HEAD' sentinel).
+		if [ "${_branch}" != "HEAD" ]; then
+			if ! git checkout "${_branch}"; then
+				log_error "git checkout '${_branch}' failed; aborting release."
+				return 1
+			fi
+		fi
+
+		if [ ! -x "./${_build}" ] && [ ! -f "./${_build}" ]; then
+			log_error "Build script './${_build}' not found; aborting release."
+			return 1
+		fi
+
+		./build_tmpfs.sh || { log_error "build_tmpfs.sh failed; aborting."; return 1; }
+		"./${_build}"     || { log_error "'${_build}' failed; aborting.";  return 1; }
+	done
+
+	# Restore the final branch (best-effort; a failure here shouldn't mask a
+	# successful build).
+	if [ -n "${_final_branch}" ] && [ "${_final_branch}" != "HEAD" ]; then
+		log_info "Restoring branch '${_final_branch}'."
+		git checkout "${_final_branch}" || log_warn "Could not restore branch '${_final_branch}'."
+	fi
+
+	# Optional shutdown, preserving prior behaviour.
+	if [ -n "${SHUTDOWN_AFTER_BUILDING}" ]; then
+		log_info "Shutting down in 5 minutes."
+		shutdown -h +5
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# tmpfs_rationale (documentation only)
+#
+# Experience has shown that using a file system in RAM speeds up the build
+# process 5 to 10 times compared to SSDs or spinning disks. Unfortunately
+# tmpfs doesn't support extended attributes, which some tools need during
+# installation (e.g. flatpak). Therefore we don't use the tmpfs mount
+# directly; instead we create an image file inside the tmpfs, format it with
+# a file system that supports xattrs (ext4), and build inside that image.
+#
+# This rationale previously lived duplicated in build_tmpfs.sh and
+# build_cleanup; it is centralised here so both can reference it.
+# ---------------------------------------------------------------------------
 
 init_build()
 {
@@ -277,10 +506,15 @@ generate_password_hashes()
 		echo "       Set both variables in your constants file before building."
 		exit 1
 	fi
-	if [ ${#MSE_USER_PASSWORD} -lt 4 ] || [ ${#MSE_ADMIN_PASSWORD} -lt 4 ]; then
-		echo "ERROR: Passwords must be at least 4 characters."
+	if [ ${#MSE_ADMIN_PASSWORD} -lt 8 ]; then
+		echo "ERROR: Admin passwords must be at least 8 characters."
 		exit 1
 	fi
+	if [ ${#MSE_USER_PASSWORD} -lt 4 ]; then
+		echo "ERROR: User passwords must be at least 4 characters."
+		exit 1
+	fi
+	
 	if ! command -v mkpasswd >/dev/null 2>&1; then
 		echo "ERROR: mkpasswd not found on build host. Run: apt install whois"
 		exit 1
@@ -359,13 +593,13 @@ build_image()
 			md5sum ${DEBIAN_TAR} > ${DEBIAN_TAR}.md5
 		fi
 
-		# move files from tmpfs to harddisk
-		if [ -d "${BUILD_DIR}" ]
+		# move finished artifacts from the build root to the output dir
+		if [ -d "${OUTPUT_DIR}" ]
 		then
-			mv ${PREFIX}* "${BUILD_DIR}"
+			mv ${PREFIX}* "${OUTPUT_DIR}"
 		fi
 	else
-		echo "Error: ISO file was not build" | tee -a logfile.txt
+		echo "Error: ISO file was not built" | tee -a logfile.txt
 	fi
 
 	cache_cleanup
@@ -378,8 +612,205 @@ build_image()
 
 	echo "Start: ${START}" | tee -a logfile.txt
 	echo "Stop : $(date)" | tee -a logfile.txt
-	if [ -d "${BUILD_DIR}" ]
+	if [ -d "${OUTPUT_DIR}" ]
 	then
-		mv logfile.txt "${BUILD_DIR}"
+		mv logfile.txt "${OUTPUT_DIR}"
 	fi
+}
+
+# ---------------------------------------------------------------------------
+# build_virtualbox_ova()
+#
+# Wraps the finished live ISO into a portable VirtualBox appliance (.ova):
+#
+#   * a READ-ONLY base disk holding the live system, produced by converting
+#     the hybrid ISO to a dynamically-allocated VDI (VBoxManage convertfromraw
+#     --variant Standard). The ISO is a hybrid image, so it is bootable as a
+#     raw disk; the VM boots it exactly like a USB stick.
+#   * a separate PERSISTENCE OVERLAY disk: a dynamically-allocated (adaptive,
+#     thin-provisioned) VDI whose single partition carries the GPT name and
+#     ext4 label "persistence" plus a persistence.conf at its root, which is
+#     exactly what Debian live-boot/Lernstick probes for. The VM boots with
+#     the "persistence" kernel parameter (set in the boot config) so writes
+#     land on this overlay and survive reboots.
+#
+# The overlay size is configured in constants:
+#   VBOX_OVERLAY_SIZE_GB   overlay capacity in GB (default 8)
+#   VBOX_OVERLAY_CONF      persistence.conf body (default "/ union" = full
+#                          overlay). Set to e.g. "/home\n/etc union" for
+#                          selective persistence.
+#   VBOX_VM_NAME           appliance/VM name (default from ISO_PREFIX)
+#   VBOX_VM_RAM_MB         guest RAM in MB (default 2048)
+#   VBOX_VM_VRAM_MB        video RAM in MB (default 32)
+#
+# The overlay grows adaptively: --variant Standard means the .vdi only
+# consumes host space as the guest actually writes into it, up to the
+# configured capacity. Nothing is pre-allocated.
+#
+# Requires on the build host: VBoxManage, parted, mkfs.ext4, and privileges
+# to loop-mount (for writing persistence.conf). Degrades to a clear error if
+# any are missing, without touching the already-built ISO.
+#
+# Call AFTER build_image(), with IMAGE / PREFIX referring to the built ISO.
+# Typically invoked from a dedicated build_*_vbox.sh entry script.
+# ---------------------------------------------------------------------------
+build_virtualbox_ova()
+{
+	# Ensure artifact directories exist even when this is invoked directly
+	# (not via run_build). Idempotent; honours constants / defaults.
+	resolve_artefact_dirs
+
+	# --- locate the source ISO ---------------------------------------------
+	# Prefer an explicitly passed path; else the just-built ${IMAGE}; else the
+	# newest matching ISO in OUTPUT_DIR.
+	_iso="${1:-${IMAGE}}"
+	if [ -z "${_iso}" ] || [ ! -f "${_iso}" ]; then
+		if [ -n "${PREFIX}" ] && [ -f "${OUTPUT_DIR}/${PREFIX}.iso" ]; then
+			_iso="${OUTPUT_DIR}/${PREFIX}.iso"
+		fi
+	fi
+	if [ -z "${_iso}" ] || [ ! -f "${_iso}" ]; then
+		log_error "build_virtualbox_ova: no source ISO found (looked for '${1:-${IMAGE}}')."
+		return 1
+	fi
+	log_info "VirtualBox: using source ISO '${_iso}'"
+
+	# --- resolve configuration ---------------------------------------------
+	_vm_name="${VBOX_VM_NAME:-${ISO_PREFIX:-live}-vs}"
+	_overlay_gb="${VBOX_OVERLAY_SIZE_GB:-8}"
+	_overlay_conf="${VBOX_OVERLAY_CONF:-/ union}"
+	_ram="${VBOX_VM_RAM_MB:-2048}"
+	_vram="${VBOX_VM_VRAM_MB:-32}"
+
+	# Intermediate VM artifacts (base/overlay disks, working VM registration)
+	# go in the shared scratch dir, NOT the build root — so they land under
+	# the git-ignorable _build tree and never pollute the working copy.
+	# Cleaned up on entry so repeated runs start fresh.
+	_vbox_dir="${BUILD_ARTEFACTS_DIR}/vbox"
+	_base_vdi="${_vbox_dir}/${_vm_name}-base.vdi"
+	_overlay_raw="${_vbox_dir}/${_vm_name}-overlay.raw"
+	_overlay_vdi="${_vbox_dir}/${_vm_name}-overlay.vdi"
+	_ova_out="${OUTPUT_DIR}/${PREFIX:-${_vm_name}}.ova"
+
+	# --- preflight: required tools -----------------------------------------
+	_missing=""
+	for _t in VBoxManage parted mkfs.ext4; do
+		command -v "${_t}" >/dev/null 2>&1 || _missing="${_missing} ${_t}"
+	done
+	if [ -n "${_missing}" ]; then
+		log_error "build_virtualbox_ova: missing required tool(s):${_missing}"
+		log_error "Install VirtualBox (VBoxManage) and parted/e2fsprogs on the build host."
+		return 1
+	fi
+	# Loop-mounting to write persistence.conf needs root.
+	if [ "$(id -u)" -ne 0 ]; then
+		log_warn "build_virtualbox_ova: not running as root; loop-mount for persistence.conf may fail."
+	fi
+
+	rm -rf "${_vbox_dir}"
+	mkdir -p "${_vbox_dir}"
+
+	# --- 1) base read-only disk from the ISO -------------------------------
+	# The hybrid ISO is a valid raw disk image; convert straight to an
+	# adaptive VDI. It is attached read-only to the VM, so the guest never
+	# writes to it (all writes go to the overlay).
+	log_info "VirtualBox: converting ISO -> adaptive base VDI"
+	if ! VBoxManage convertfromraw "${_iso}" "${_base_vdi}" \
+		--format VDI --variant Standard; then
+		log_error "build_virtualbox_ova: convertfromraw (base) failed."
+		return 1
+	fi
+
+	# --- 2) persistence overlay: raw -> partition -> label -> conf ---------
+	log_info "VirtualBox: creating ${_overlay_gb}G adaptive persistence overlay"
+
+	# Sparse raw file of the requested capacity (stays thin on disk).
+	if ! truncate -s "${_overlay_gb}G" "${_overlay_raw}"; then
+		log_error "build_virtualbox_ova: could not create overlay raw file."
+		return 1
+	fi
+
+	# One GPT partition spanning the disk, GPT name "persistence".
+	parted -s "${_overlay_raw}" mklabel gpt
+	parted -s "${_overlay_raw}" mkpart persistence ext4 1MiB 100%
+
+	# Format that partition ext4 with filesystem LABEL "persistence".
+	# The partition starts at the 1MiB offset; size = capacity minus that MiB.
+	_off_b=$((1024 * 1024))
+	_fs_blocks=$(( (_overlay_gb * 1024 - 1) * 1024 ))   # 1K blocks
+	if ! mkfs.ext4 -q -F -L persistence -E offset=${_off_b} \
+		"${_overlay_raw}" "${_fs_blocks}"; then
+		log_error "build_virtualbox_ova: mkfs.ext4 on overlay failed."
+		return 1
+	fi
+
+	# Write persistence.conf into the partition root (loop-mount by offset).
+	# live-boot ignores a "persistence"-labelled volume that lacks this file.
+	_mnt="${_vbox_dir}/mnt"
+	mkdir -p "${_mnt}"
+	if mount -o loop,offset=${_off_b} "${_overlay_raw}" "${_mnt}" 2>/dev/null; then
+		# shellcheck disable=SC2059
+		printf "${_overlay_conf}\n" > "${_mnt}/persistence.conf"
+		log_info "VirtualBox: wrote persistence.conf ($(head -1 "${_mnt}/persistence.conf"))"
+		sync
+		umount "${_mnt}"
+	else
+		log_error "build_virtualbox_ova: could not loop-mount overlay to write persistence.conf."
+		log_error "Run as root, or ensure loop devices are available."
+		return 1
+	fi
+	rmdir "${_mnt}" 2>/dev/null || true
+
+	# Convert the finished raw overlay to an adaptive VDI, then drop the raw.
+	log_info "VirtualBox: converting overlay raw -> adaptive VDI"
+	if ! VBoxManage convertfromraw "${_overlay_raw}" "${_overlay_vdi}" \
+		--format VDI --variant Standard; then
+		log_error "build_virtualbox_ova: convertfromraw (overlay) failed."
+		return 1
+	fi
+	rm -f "${_overlay_raw}"
+
+	# --- 3) assemble the VM ------------------------------------------------
+	# Remove any stale VM of the same name so re-runs are idempotent.
+	VBoxManage unregistervm "${_vm_name}" --delete >/dev/null 2>&1 || true
+
+	log_info "VirtualBox: creating VM '${_vm_name}'"
+	VBoxManage createvm --name "${_vm_name}" --ostype Debian_64 \
+		--basefolder "${_vbox_dir}" --register
+
+	VBoxManage modifyvm "${_vm_name}" \
+		--memory "${_ram}" --vram "${_vram}" \
+		--firmware efi \
+		--boot1 disk --boot2 none --boot3 none --boot4 none \
+		--nic1 nat --audio none --usb on
+
+	# SATA controller carries both disks: base read-only, overlay read-write.
+	VBoxManage storagectl "${_vm_name}" --name "SATA" --add sata --controller IntelAhci --portcount 2
+
+	VBoxManage storageattach "${_vm_name}" --storagectl "SATA" \
+		--port 0 --device 0 --type hdd --medium "${_base_vdi}" \
+		--mtype readonly
+
+	VBoxManage storageattach "${_vm_name}" --storagectl "SATA" \
+		--port 1 --device 0 --type hdd --medium "${_overlay_vdi}" \
+		--mtype normal
+
+	# --- 4) export the appliance -------------------------------------------
+	rm -f "${_ova_out}"
+	log_info "VirtualBox: exporting OVA -> ${_ova_out}"
+	if ! VBoxManage export "${_vm_name}" --output "${_ova_out}" \
+		--vsys 0 \
+		--product "${THEME_TITLE:-${_vm_name}}" \
+		--vendor "BFH MSE"; then
+		log_error "build_virtualbox_ova: OVA export failed."
+		return 1
+	fi
+
+	# Checksum next to the OVA, consistent with the ISO artifacts.
+	( cd "${OUTPUT_DIR}" && md5sum "$(basename "${_ova_out}")" > "$(basename "${_ova_out}").md5" )
+
+	# Unregister (keep the exported OVA; drop the working VM registration).
+	VBoxManage unregistervm "${_vm_name}" --delete >/dev/null 2>&1 || true
+
+	log_info "VirtualBox: done -> ${_ova_out}"
 }
