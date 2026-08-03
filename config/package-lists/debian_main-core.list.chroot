@@ -18,7 +18,7 @@ live-config
 live-config-systemd
 
 # --- Kernel & firmware ---
-linux-image-amd64
+#linux-image-amd64
 firmware-linux-free
 firmware-linux-nonfree
 firmware-misc-nonfree
